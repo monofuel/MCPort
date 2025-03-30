@@ -22,12 +22,12 @@ proc logToFile(stream: char, msg: string) =
   logFile.writeLine(formattedMsg)
   logFile.flushFile()
   
-  stderr.writeLine(formattedMsg)
-  stderr.flushFile()
 
 proc log*(msg: string) =
   ## Log to stderr and file with 'E' prefix
   logToFile('E', msg)
+  stderr.writeLine(msg)
+  stderr.flushFile()
 
 type
   RpcRequest = object
@@ -168,7 +168,7 @@ proc handleRequest(line: string) =
               }
             }
           ],
-          "nextCursor": nil
+          # "nextCursor": nil
         }
       )
       sendMcpMessage(response)
