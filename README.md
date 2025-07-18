@@ -1,3 +1,3 @@
-# Nim MCP server
+# MCPort
 
-- nim library for creating an MCP server
+- nim library for mcp server and client
