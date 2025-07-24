@@ -21,9 +21,9 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ~/.nimble
-        key: ${{ runner.os }}-nimble-${{ hashFiles('*.nimble') }}
+        key: ${{ runner.os }}-nimble-v2-${{ hashFiles('*.nimble') }}
         restore-keys: |
-          ${{ runner.os }}-nimble-
+          ${{ runner.os }}-nimble-v2-
     - run: nimble install -y
     - run: nimble test -y
     - run: nimble test --gc:orc -y
