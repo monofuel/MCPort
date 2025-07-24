@@ -6,27 +6,14 @@ const
   MCP_VERSION = "2024-11-05"  ## MCP protocol version (updated to match client)
   TOOL_SHIBBOLEET = "secret_fetcher"  ## Name of our tool
   SHIBBOLEET_RESPONSE = "Shibboleet says: Leet greetings from the universe!"  ## Tool response
-  LOG_FILE = "C:\\Users\\monofuel\\Documents\\Code\\nim_mcp_server\\mcp_server.log" ## Log file absolute path
 
 var
-  logFile: File
   initialized = false  ## Track initialization state
 
-proc logToFile(stream: char, msg: string) =
-  ## Log a message to file and stderr with stream prefix
-  let timestamp = now().format("yyyy-MM-dd HH:mm:ss")
-  let formattedMsg = fmt"[{timestamp}] {stream} {msg}"
-  
-  if logFile.isNil:
-    logFile = open(LOG_FILE, fmAppend)
-  logFile.writeLine(formattedMsg)
-  logFile.flushFile()
-  
-
 proc log*(msg: string) =
-  ## Log to stderr and file with 'E' prefix
-  logToFile('E', msg)
-  stderr.writeLine(msg)
+  ## Log a message to stderr with timestamp
+  let timestamp = now().format("yyyy-MM-dd HH:mm:ss")
+  stderr.writeLine(fmt"[{timestamp}] {msg}")
   stderr.flushFile()
 
 type
@@ -81,11 +68,11 @@ proc sendMcpMessage[T](msg: T) =
   stdout.write(jsonMsg)
   stdout.write("\n")
   stdout.flushFile()
-  logToFile('O', "Sent: " & jsonMsg)
+  log("Sent: " & jsonMsg)
 
 proc handleRequest(line: string) =
   ## Handle an incoming MCP request from stdin
-  logToFile('I', line)
+  log("Received raw: " & line)
   
   try:
     let request = line.fromJson(RpcRequest)
@@ -240,10 +227,7 @@ proc runServer() =
     if line.len > 0:
       log("Received: " & line)
       handleRequest(line.strip())
-  
-  if not logFile.isNil:
-    log("Server shutting down...")
-    logFile.close()
+  log("Server shutting down...")
 
 when isMainModule:
   runServer()
