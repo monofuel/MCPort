@@ -109,6 +109,31 @@ proc createResponse*(id: int, data: JsonNode): RpcResponse =
 proc handleRequest*(server: McpServer, line: string): McpResult =
   ## Handle an incoming MCP request and return the result.
   try:
+    # First, try to determine if this is a notification or request
+    let parsed = line.parseJson()
+    
+    # Check if it has an 'id' field - if not, it's a notification
+    if not parsed.hasKey("id"):
+      # This is a notification - handle it but don't return a response
+      # Just validate it's a proper notification and return empty result
+      let notification = line.fromJson(RpcNotification)
+      if notification.jsonrpc != "2.0":
+        # For malformed notifications, we still shouldn't respond
+        return McpResult(isError: false, response: createResponse(0, %*{}))
+      
+      case notification.`method`
+      of "notifications/initialized":
+        if not server.initialized:
+          # Log warning but don't return error for notifications
+          discard
+      else:
+        # Unknown notification method - just ignore it
+        discard
+      
+      # For notifications, return a dummy response that won't be sent
+      return McpResult(isError: false, response: createResponse(0, %*{}))
+    
+    # This is a request (has 'id' field) - parse as RpcRequest
     let request = line.fromJson(RpcRequest)
     if request.jsonrpc != "2.0":
       return McpResult(
@@ -139,14 +164,6 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       })
       server.initialized = true
       return McpResult(isError: false, response: response)
-    
-    of "notifications/initialized":
-      # This is a notification, no response needed
-      if not server.initialized:
-        # Log warning but don't return error for notifications
-        discard
-      # For notifications, return a response with id 0 to indicate no response needed
-      return McpResult(isError: false, response: createResponse(0, %*{}))
     
     of "tools/list":
       if not server.initialized:

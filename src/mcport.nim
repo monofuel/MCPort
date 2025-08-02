@@ -14,13 +14,3 @@ export
   mcp_client_core,
   mcp_client_stdio,
   mcp_client_http
-
-# Re-export commonly used server types and functions
-export
-  McpServer, McpTool, ToolHandler, HttpMcpServer,
-  newMcpServer, registerTool, runStdioServer, newHttpMcpServer
-
-# Re-export commonly used client types and functions  
-export
-  McpClient, StdioMcpClient, HttpMcpClient, ClientInfo, ToolCallResult, ContentItem,
-  newMcpClient, newStdioMcpClient, newHttpMcpClient, createExampleStdioClient, createExampleHttpClient

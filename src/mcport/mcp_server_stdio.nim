@@ -1,5 +1,5 @@
 import
-  std/[streams, times, strformat, strutils, os, json],
+  std/[streams, times, strformat, strutils, json],
   jsony,
   ./mcp_core
 
@@ -37,13 +37,21 @@ proc handleStdioRequest(server: McpServer, line: string) =
   ## Handle an incoming MCP request from stdin using the core server.
   logToFile('I', line)
   
+  # Check if the incoming message is a notification (no 'id' field) or request (has 'id' field)
+  let isNotification = try:
+    let parsed = line.parseJson()
+    not parsed.hasKey("id")
+  except:
+    false  # If parsing fails, assume it's a request so we send an error response
+  
   let result = server.handleRequest(line)
   
   if result.isError:
+    # Always send error responses, even for malformed notifications
     sendMcpMessage(result.error)
   else:
-    # Don't send response for notifications (id = 0)
-    if result.response.id != 0:
+    # Only send success responses for requests, not for notifications
+    if not isNotification:
       sendMcpMessage(result.response)
 
 proc runStdioServer*(server: McpServer) =

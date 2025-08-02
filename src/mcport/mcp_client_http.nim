@@ -104,32 +104,45 @@ proc listTools*(client: HttpMcpClient) =
   # For now, just log success - we'll implement tool processing later
   client.log("Tools list received successfully")
 
-proc callTool*(client: HttpMcpClient, toolName: string, arguments: JsonNode = %*{}): ToolCallResult =
-  ## Call a tool on the server.
+proc callTool*(client: HttpMcpClient, toolName: string, arguments: JsonNode = %*{}): JsonNode =
+  ## Call a tool on the server and return the result content.
   client.log(fmt"Calling tool: {toolName}")
   
   if not client.client.initialized:
     raise newException(CatchableError, "Client not initialized")
   
-  # For now, just try to call the tool without checking availability
   let callRequest = client.client.createToolCallRequest(toolName, arguments)
   let callResult = client.sendRequest(callRequest)
   
-  # Simple result handling
   if callResult.isError:
-    return ToolCallResult(
-      isError: true,
-      errorMessage: callResult.error.error.message
-    )
-  else:
-    return ToolCallResult(
-      isError: false,
-      content: @[ContentItem(`type`: "text", text: "Tool called successfully")]
-    )
+    let errorMessage = callResult.error.error.message
+    client.log(fmt"Tool call failed: {errorMessage}")
+    raise newException(CatchableError, fmt"Tool call '{toolName}' failed: {errorMessage}")
+  
+  # Return the actual result content from the server
+  return callResult.response.result
 
 proc getAvailableTools*(client: HttpMcpClient): seq[string] =
-  ## Get list of available tool names.
-  @[]  # Return empty list for now
+  ## Get list of available tool names from the server.
+  if not client.client.initialized:
+    raise newException(CatchableError, "Client not initialized")
+  
+  let listRequest = client.client.createToolsListRequest()
+  let listResult = client.sendRequest(listRequest)
+  
+  if listResult.isError:
+    let errorMessage = listResult.error.error.message
+    client.log(fmt"List tools failed: {errorMessage}")
+    raise newException(CatchableError, fmt"Failed to list tools: {errorMessage}")
+  
+  # Parse the tools from the response
+  var toolNames: seq[string] = @[]
+  if listResult.response.result.hasKey("tools"):
+    for tool in listResult.response.result["tools"]:
+      if tool.hasKey("name"):
+        toolNames.add(tool["name"].getStr())
+  
+  return toolNames
 
 proc isConnected*(client: HttpMcpClient): bool =
   ## Check if the client is connected.

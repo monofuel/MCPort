@@ -23,40 +23,23 @@ proc demonstrateStdioClient() =
   
   echo fmt"Attempting to connect to server: {serverPath}"
   
-  # Connect and initialize (this launches the server process)
-  # Now throws exceptions directly instead of returning booleans
+  # Connect and initialize - throws exceptions on failure
   client.connectAndInitialize(serverPath, serverArgs)
   echo "✅ Successfully connected and initialized!"
   
-  # List available tools
+  # List available tools - throws exception on failure
   let toolList = client.getAvailableTools().join(", ")
   echo fmt"Available tools: {toolList}"
   
-  # Call the secret_fetcher tool with default recipient
+  # Call the secret_fetcher tool with default recipient - throws exception on failure
   echo "\n--- Calling secret_fetcher with default recipient ---"
   let result1 = client.callTool("secret_fetcher")
-  if result1.isError:
-    raise newException(CatchableError, fmt"Tool call failed: {result1.errorMessage}")
+  echo fmt"Response: {result1}"
   
-  for item in result1.content:
-    echo fmt"Response: {item.text}"
-  
-  # Call with custom recipient
+  # Call with custom recipient - throws exception on failure
   echo "\n--- Calling secret_fetcher with custom recipient ---"
   let result2 = client.callTool("secret_fetcher", %*{"recipient": "Alice"})
-  if result2.isError:
-    raise newException(CatchableError, fmt"Tool call failed: {result2.errorMessage}")
-  
-  for item in result2.content:
-    echo fmt"Response: {item.text}"
-  
-  # Try to call an unknown tool - this should fail
-  echo "\n--- Trying to call unknown tool (should fail) ---"
-  let result3 = client.callTool("unknown_tool")
-  if not result3.isError:
-    raise newException(CatchableError, "Expected error for unknown tool, but call succeeded")
-  
-  echo fmt"Expected error: {result3.errorMessage}"
+  echo fmt"Response: {result2}"
   
   # Clean up
   client.close()
@@ -89,31 +72,23 @@ proc demonstrateHttpClient() =
   echo fmt"Attempting to connect to HTTP server: {serverUrl}"
   
   try:
-    # Connect and initialize - now throws exceptions directly
+    # Connect and initialize - throws exceptions on failure
     client.connectAndInitialize()
     echo "✅ Successfully connected and initialized!"
     
-    # List available tools
+    # List available tools - throws exception on failure
     let availableTools = client.getAvailableTools().join(", ")
     echo fmt"Available tools: {availableTools}"
     
-    # Call the secret_fetcher tool with default recipient
+    # Call the secret_fetcher tool with default recipient - throws exception on failure
     echo "\n--- Calling secret_fetcher with default recipient ---"
     let result1 = client.callTool("secret_fetcher")
-    if result1.isError:
-      raise newException(CatchableError, fmt"Tool call failed: {result1.errorMessage}")
+    echo fmt"Response: {result1}"
     
-    for item in result1.content:
-      echo fmt"Response: {item.text}"
-    
-    # Call with custom recipient
+    # Call with custom recipient - throws exception on failure
     echo "\n--- Calling secret_fetcher with custom recipient ---"
     let result2 = client.callTool("secret_fetcher", %*{"recipient": "Bob"})
-    if result2.isError:
-      raise newException(CatchableError, fmt"Tool call failed: {result2.errorMessage}")
-    
-    for item in result2.content:
-      echo fmt"Response: {item.text}"
+    echo fmt"Response: {result2}"
     
     # Clean up client
     client.close()
