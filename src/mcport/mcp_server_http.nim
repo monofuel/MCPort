@@ -81,7 +81,8 @@ proc newHttpMcpServer*(mcpServer: McpServer, logEnabled: bool = true): HttpMcpSe
 
 proc serve*(httpServer: HttpMcpServer, port: int, address: string = "localhost") =
   ## Start serving the HTTP MCP server on the specified port and address.
-  httpServer.log(&"Starting HTTP MCP server on {address}:{port}")
+  let portStr = $port
+  httpServer.log(&"Starting HTTP MCP server on {address}:{portStr}")
   httpServer.httpServer.serve(Port(port), address)
 
 proc close*(httpServer: HttpMcpServer) =
@@ -121,4 +122,4 @@ proc createExampleHttpServer*(): HttpMcpServer =
 
 when isMainModule:
   let server = createExampleHttpServer()
-  server.serve(Port(8080), "0.0.0.0") 
+  server.serve(8097, "0.0.0.0") 

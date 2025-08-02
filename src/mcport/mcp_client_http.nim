@@ -23,7 +23,7 @@ proc newHttpMcpClient*(name: string, version: string, baseUrl: string, logEnable
     logEnabled: logEnabled
   )
 
-proc connect*(client: HttpMcpClient): bool =
+proc connect*(client: HttpMcpClient) =
   ## Initialize the HTTP client connection.
   client.httpClient = newHttpClient()
   client.httpClient.headers = newHttpHeaders({
@@ -31,15 +31,11 @@ proc connect*(client: HttpMcpClient): bool =
     "Accept": "application/json"
   })
   client.log(fmt"Connected to: {client.baseUrl}")
-  return true
 
 proc sendRequest(client: HttpMcpClient, request: ClientRequest): ClientResult =
   ## Send a JSON-RPC request via HTTP.
   if client.httpClient == nil:
-    return ClientResult(
-      isError: true,
-      error: createError(0, -32603, "HTTP client not initialized")
-    )
+    raise newException(CatchableError, "HTTP client not initialized")
   
   try:
     let jsonRequest = request.toJson()
@@ -51,18 +47,12 @@ proc sendRequest(client: HttpMcpClient, request: ClientRequest): ClientResult =
     return parseResponse(response)
   except HttpRequestError as e:
     client.log(fmt"HTTP request failed: {e.msg}")
-    return ClientResult(
-      isError: true,
-      error: createError(0, -32603, fmt"HTTP request failed: {e.msg}")
-    )
+    raise newException(CatchableError, fmt"HTTP request failed: {e.msg}")
   except Exception as e:
     client.log(fmt"Request failed: {e.msg}")
-    return ClientResult(
-      isError: true,
-      error: createError(0, -32603, fmt"Request failed: {e.msg}")
-    )
+    raise newException(CatchableError, fmt"Request failed: {e.msg}")
 
-proc initialize*(client: HttpMcpClient): bool =
+proc initialize*(client: HttpMcpClient) =
   ## Initialize the connection with the server.
   client.log("Initializing connection...")
   
@@ -71,12 +61,12 @@ proc initialize*(client: HttpMcpClient): bool =
   let initResult = client.sendRequest(initRequest)
   
   if initResult.isError:
-    client.log(fmt"Initialize failed: {initResult.error.error.message}")
-    return false
+    let errorMessage = initResult.error.error.message
+    client.log(fmt"Initialize failed: {errorMessage}")
+    raise newException(CatchableError, fmt"Initialize failed: {errorMessage}")
   
   if not client.client.handleInitializeResponse(initResult):
-    client.log("Failed to process initialize response")
-    return false
+    raise newException(CatchableError, "Failed to process initialize response")
   
   # For HTTP, we typically don't send the initialized notification
   # but let's send it for protocol compliance
@@ -84,40 +74,36 @@ proc initialize*(client: HttpMcpClient): bool =
   let notificationResult = client.sendRequest(notification)
   
   if notificationResult.isError:
-    client.log(fmt"Initialized notification failed: {notificationResult.error.error.message}")
+    let errorMessage = notificationResult.error.error.message
+    client.log(fmt"Initialized notification failed: {errorMessage}")
     # Don't fail on notification error - it's not critical for HTTP
   
   client.log("Successfully initialized")
-  return true
 
-proc listTools*(client: HttpMcpClient): bool =
+proc listTools*(client: HttpMcpClient) =
   ## List available tools from the server.
   client.log("Listing available tools...")
   
   if not client.client.initialized:
-    client.log("Client not initialized")
-    return false
+    raise newException(CatchableError, "Client not initialized")
   
   let listRequest = client.client.createToolsListRequest()
   let listResult = client.sendRequest(listRequest)
   
   if listResult.isError:
-    client.log(fmt"List tools failed: {listResult.error.error.message}")
-    return false
+    let errorMessage = listResult.error.error.message
+    client.log(fmt"List tools failed: {errorMessage}")
+    raise newException(CatchableError, fmt"List tools failed: {errorMessage}")
   
   # For now, just log success - we'll implement tool processing later
   client.log("Tools list received successfully")
-  return true
 
 proc callTool*(client: HttpMcpClient, toolName: string, arguments: JsonNode = %*{}): ToolCallResult =
   ## Call a tool on the server.
   client.log(fmt"Calling tool: {toolName}")
   
   if not client.client.initialized:
-    return ToolCallResult(
-      isError: true,
-      errorMessage: "Client not initialized"
-    )
+    raise newException(CatchableError, "Client not initialized")
   
   # For now, just try to call the tool without checking availability
   let callRequest = client.client.createToolCallRequest(toolName, arguments)
@@ -152,16 +138,16 @@ proc close*(client: HttpMcpClient) =
     client.httpClient = nil
     client.log("Connection closed")
 
-proc connectAndInitialize*(client: HttpMcpClient): bool =
+proc connectAndInitialize*(client: HttpMcpClient) =
   ## Connect to a server and initialize the connection.
-  if not client.connect():
-    return false
+  client.connect()
   
-  if not client.initialize():
+  try:
+    client.initialize()
+    client.listTools()
+  except Exception as e:
     client.close()
-    return false
-  
-  return client.listTools()
+    raise e
 
 # Example usage function
 proc createExampleHttpClient*(baseUrl: string = "http://localhost:8080"): HttpMcpClient =

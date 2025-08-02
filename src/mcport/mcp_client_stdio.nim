@@ -23,22 +23,28 @@ proc newStdioMcpClient*(name: string, version: string, logEnabled: bool = true):
     logEnabled: logEnabled
   )
 
-proc connect*(client: StdioMcpClient, command: string, args: seq[string] = @[]): bool =
+proc connect*(client: StdioMcpClient, command: string, args: seq[string] = @[]) =
   ## Connect to an MCP server by launching a process.
   let argsStr = args.join(" ")
   client.log(fmt"Launching server: {command} {argsStr}")
-  client.process = startProcess(command, args = args, options = {poUsePath})
-  client.inputStream = client.process.outputStream
-  client.outputStream = client.process.inputStream
-  return true
+  
+  try:
+    client.process = startProcess(command, args = args, options = {poUsePath})
+    client.inputStream = client.process.outputStream
+    client.outputStream = client.process.inputStream
+  except Exception as e:
+    raise newException(CatchableError, fmt"Failed to start MCP server process: {e.msg}")
 
-proc sendRequest(client: StdioMcpClient, request: ClientRequest): bool =
+proc sendRequest(client: StdioMcpClient, request: ClientRequest) =
   ## Send a JSON-RPC request to the server.
   let jsonRequest = request.toJson()
   client.log(fmt"Sending: {jsonRequest}")
-  client.outputStream.writeLine(jsonRequest)
-  client.outputStream.flush()
-  return true
+  
+  try:
+    client.outputStream.writeLine(jsonRequest)
+    client.outputStream.flush()
+  except Exception as e:
+    raise newException(CatchableError, fmt"Failed to send request: {e.msg}")
 
 proc readResponse(client: StdioMcpClient): string =
   ## Read a JSON-RPC response from the server.
@@ -48,26 +54,19 @@ proc readResponse(client: StdioMcpClient): string =
     return response
   except Exception as e:
     client.log(fmt"Failed to read response: {e.msg}")
-    return ""
+    raise newException(CatchableError, fmt"Failed to read response: {e.msg}")
 
 proc sendAndReceive(client: StdioMcpClient, request: ClientRequest): ClientResult =
   ## Send a request and receive the response.
-  if not client.sendRequest(request):
-    return ClientResult(
-      isError: true,
-      error: createError(0, -32603, "Failed to send request")
-    )
+  client.sendRequest(request)
   
   let responseStr = client.readResponse()
   if responseStr == "":
-    return ClientResult(
-      isError: true,
-      error: createError(0, -32603, "Failed to read response")
-    )
+    raise newException(CatchableError, "Received empty response from server")
   
   return parseResponse(responseStr)
 
-proc initialize*(client: StdioMcpClient): bool =
+proc initialize*(client: StdioMcpClient) =
   ## Initialize the connection with the server.
   client.log("Initializing connection...")
   
@@ -76,50 +75,43 @@ proc initialize*(client: StdioMcpClient): bool =
   let initResult = client.sendAndReceive(initRequest)
   
   if initResult.isError:
-    client.log(fmt"Initialize failed: {initResult.error.error.message}")
-    return false
+    let errorMessage = initResult.error.error.message
+    client.log(fmt"Initialize failed: {errorMessage}")
+    raise newException(CatchableError, fmt"Initialize failed: {errorMessage}")
   
   if not client.client.handleInitializeResponse(initResult):
-    client.log("Failed to process initialize response")
-    return false
+    raise newException(CatchableError, "Failed to process initialize response")
   
   # Send initialized notification (no response expected)
   let notification = createNotificationInitialized()
-  if not client.sendRequest(notification):
-    client.log("Failed to send initialized notification")
-    return false
+  client.sendRequest(notification)
   
   client.log("Successfully initialized")
-  return true
 
-proc listTools*(client: StdioMcpClient): bool =
+proc listTools*(client: StdioMcpClient) =
   ## List available tools from the server.
   client.log("Listing available tools...")
   
   if not client.client.initialized:
-    client.log("Client not initialized")
-    return false
+    raise newException(CatchableError, "Client not initialized")
   
   let listRequest = client.client.createToolsListRequest()
   let listResult = client.sendAndReceive(listRequest)
   
   if listResult.isError:
-    client.log(fmt"List tools failed: {listResult.error.error.message}")
-    return false
+    let errorMessage = listResult.error.error.message
+    client.log(fmt"List tools failed: {errorMessage}")
+    raise newException(CatchableError, fmt"List tools failed: {errorMessage}")
   
   # For now, just log success - we'll implement tool processing later
   client.log("Tools list received successfully")
-  return true
 
 proc callTool*(client: StdioMcpClient, toolName: string, arguments: JsonNode = %*{}): ToolCallResult =
   ## Call a tool on the server.
   client.log(fmt"Calling tool: {toolName}")
   
   if not client.client.initialized:
-    return ToolCallResult(
-      isError: true,
-      errorMessage: "Client not initialized"
-    )
+    raise newException(CatchableError, "Client not initialized")
   
   # For now, just try to call the tool without checking availability
   let callRequest = client.client.createToolCallRequest(toolName, arguments)
@@ -162,16 +154,16 @@ proc close*(client: StdioMcpClient) =
     client.outputStream = nil
     client.log("Connection closed")
 
-proc connectAndInitialize*(client: StdioMcpClient, command: string, args: seq[string] = @[]): bool =
+proc connectAndInitialize*(client: StdioMcpClient, command: string, args: seq[string] = @[]) =
   ## Connect to a server and initialize the connection.
-  if not client.connect(command, args):
-    return false
+  client.connect(command, args)
   
-  if not client.initialize():
+  try:
+    client.initialize()
+    client.listTools()
+  except Exception as e:
     client.close()
-    return false
-  
-  return client.listTools()
+    raise e
 
 # Example usage function
 proc createExampleStdioClient*(): StdioMcpClient =

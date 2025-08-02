@@ -145,4 +145,5 @@ let
 - try to make things as idempotent as possible. if a job runs every day, we should make sure it can be robust.
 - never use booleans for 'success' or 'error'. If a function was successful, return nothing and do not throw an error. if a function failed, throw an error.
 - code should fail fast and fail loudly. do not try to surpress warnings or ignore errors.
+- NEVER use success booleans. throw an error.
 - avoid doing function calls inside of format strings. Instead, please assign to variables to use in the format string.
