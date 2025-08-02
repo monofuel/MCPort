@@ -1,7 +1,8 @@
 import
-  std/[json, strformat, times, strutils],
+  std/[json, strformat, times, strutils, tables],
   jsony,
   mummy,
+  mummy/routers,
   ./mcp_core
 
 type
@@ -16,13 +17,13 @@ proc log(httpServer: HttpMcpServer, msg: string) =
     let timestamp = now().format("yyyy-MM-dd HH:mm:ss")
     echo fmt"[{timestamp}] HTTP MCP: {msg}"
 
-proc handleMcpRequest(httpServer: HttpMcpServer, request: Request) =
-  ## Handle incoming HTTP JSON-RPC requests.
+proc handleJsonRpcRequest(httpServer: HttpMcpServer, request: Request) =
+  ## Handle JSON-RPC requests to the /mcp endpoint.
   try:
-    # Only accept POST requests
+    # Only accept POST requests for JSON-RPC
     if request.httpMethod != "POST":
-      httpServer.log("Rejected non-POST request: " & request.httpMethod)
-      request.respond(405, body = "Method not allowed - use POST")
+      httpServer.log("Rejected non-POST request to /mcp: " & request.httpMethod)
+      request.respond(405, body = "Method not allowed - use POST for JSON-RPC requests")
       return
     
     # Check content type
@@ -33,12 +34,12 @@ proc handleMcpRequest(httpServer: HttpMcpServer, request: Request) =
         break
     
     if contentType != "application/json":
-      httpServer.log("Rejected request with invalid content-type: " & contentType)
+      httpServer.log("Rejected /mcp request with invalid content-type: " & contentType)
       request.respond(400, body = "Content-Type must be application/json")
       return
     
-    # Handle the MCP request using the core server
-    httpServer.log("Received: " & request.body)
+    # Handle the MCP JSON-RPC request using the core server
+    httpServer.log("Received JSON-RPC request: " & request.body)
     let result = httpServer.server.handleRequest(request.body)
     
     var headers: HttpHeaders
@@ -46,25 +47,58 @@ proc handleMcpRequest(httpServer: HttpMcpServer, request: Request) =
     
     if result.isError:
       let errorJson = result.error.toJson()
-      httpServer.log("Sent error: " & errorJson)
+      httpServer.log("Sent JSON-RPC error: " & errorJson)
       request.respond(200, headers, errorJson)  # JSON-RPC errors are still HTTP 200
     else:
-      # Handle notifications that don't need responses (id = 0)
-      if result.response.id == 0:
-        httpServer.log("Notification processed, no response")
+      # Handle notifications that don't need responses (empty result object)
+      if result.response.result == %*{}:
+        httpServer.log("JSON-RPC notification processed, no response")
         request.respond(204)  # No content for notifications
       else:
         let responseJson = result.response.toJson()
-        httpServer.log("Sent response: " & responseJson)
+        httpServer.log("Sent JSON-RPC response: " & responseJson)
         request.respond(200, headers, responseJson)
     
   except Exception as e:
-    httpServer.log("Error handling request: " & e.msg)
+    httpServer.log("Error handling JSON-RPC request: " & e.msg)
     # Return a JSON-RPC error for unexpected exceptions
     let errorResponse = createError(0, -32603, "Internal error: " & e.msg)
     var headers: HttpHeaders
     headers["content-type"] = "application/json"
     request.respond(500, headers, errorResponse.toJson())
+
+proc handleServerInfoRequest(httpServer: HttpMcpServer, request: Request) =
+  ## Handle server metadata requests to the /server-info endpoint.
+  try:
+    # Accept both GET and POST for server info
+    if request.httpMethod != "GET" and request.httpMethod != "POST":
+      httpServer.log("Rejected invalid method for /server-info: " & request.httpMethod)
+      request.respond(405, body = "Method not allowed - use GET or POST for server info")
+      return
+    
+    # Create server metadata response
+    let serverInfo = %*{
+      "name": httpServer.server.serverInfo.name,
+      "version": httpServer.server.serverInfo.version,
+      "capabilities": ["tools", "resources", "prompts"],
+      "endpoints": {
+        "jsonrpc": "/mcp",
+        "server_info": "/server-info"
+      },
+      "tools_count": len(httpServer.server.tools),
+      "description": "MCP Server over HTTP"
+    }
+    
+    var headers: HttpHeaders
+    headers["content-type"] = "application/json"
+    
+    let responseJson = serverInfo.toJson()
+    httpServer.log("Sent server info response")
+    request.respond(200, headers, responseJson)
+    
+  except Exception as e:
+    httpServer.log("Error handling server info request: " & e.msg)
+    request.respond(500, body = "Error generating server information")
 
 proc newHttpMcpServer*(mcpServer: McpServer, logEnabled: bool = true): HttpMcpServer =
   ## Create a new HTTP MCP server wrapper.
@@ -73,10 +107,44 @@ proc newHttpMcpServer*(mcpServer: McpServer, logEnabled: bool = true): HttpMcpSe
     logEnabled: logEnabled
   )
   
-  proc requestHandler(request: Request) {.gcsafe.} =
-    httpMcpServer.handleMcpRequest(request)
+  # Set up router with MCP endpoints
+  var router: Router
   
-  httpMcpServer.httpServer = newServer(requestHandler)
+  # Logging middleware - logs ALL requests
+  proc loggingMiddleware(request: Request) {.gcsafe.} =
+    httpMcpServer.log(&"Incoming request: {request.httpMethod} {request.uri}")
+    httpMcpServer.log(&"Headers: {request.headers}")
+    if request.body.len > 0:
+      httpMcpServer.log(&"Body: {request.body}")
+  
+  # JSON-RPC endpoint for MCP interactions
+  proc mcpHandler(request: Request) {.gcsafe.} =
+    loggingMiddleware(request)
+    httpMcpServer.handleJsonRpcRequest(request)
+  
+  # Server info endpoint
+  proc serverInfoHandler(request: Request) {.gcsafe.} =
+    loggingMiddleware(request)
+    httpMcpServer.handleServerInfoRequest(request)
+  
+  # Catch-all handler for invalid routes
+  proc invalidRouteHandler(request: Request) {.gcsafe.} =
+    loggingMiddleware(request)
+    httpMcpServer.log(&"Invalid route accessed: {request.uri}")
+    request.respond(404, body = "Not found - valid endpoints: /mcp, /server-info")
+  
+  router.post("/mcp", mcpHandler)
+  router.get("/server-info", serverInfoHandler)
+  router.post("/server-info", serverInfoHandler)  # Support both GET and POST
+  
+  # Add catch-all routes for invalid endpoints
+  router.get("/*", invalidRouteHandler)
+  router.post("/*", invalidRouteHandler)
+  router.put("/*", invalidRouteHandler)
+  router.delete("/*", invalidRouteHandler)
+  router.patch("/*", invalidRouteHandler)
+  
+  httpMcpServer.httpServer = newServer(router)
   return httpMcpServer
 
 proc serve*(httpServer: HttpMcpServer, port: int, address: string = "localhost") =
