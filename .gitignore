@@ -12,3 +12,5 @@ nimcache
 .*
 
 mcp_server.log
+nimble.develop
+nimble.paths

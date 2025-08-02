@@ -10,6 +10,9 @@
 - src/mcport/mcp_server.nim is for the MCP server
 - src/mcport/mcp_client.nim is for the MCP Client.
 
+- tests/* has all the tests
+  - tests for the mcp http server, and stdio server
+
 ## Nim best practices
 
 **Prefer letting errors bubble up naturally** - Nim's stack traces are excellent for debugging:
