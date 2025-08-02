@@ -1,5 +1,5 @@
 import
-  std/[unittest, json],
+  std/[unittest, json, tables, strutils],
   mcport/mcp_core
 
 suite "MCP Core Tests":
@@ -37,8 +37,8 @@ suite "MCP Core Tests":
     check not server.initialized
 
   test "tool registration":
-    check "secret_fetcher" in server.tools
-    check "secret_fetcher" in server.toolHandlers
+    check server.tools.hasKey("secret_fetcher")
+    check server.toolHandlers.hasKey("secret_fetcher")
 
   test "initialize request":
     let initRequest = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"""
@@ -71,7 +71,7 @@ suite "MCP Core Tests":
     
     check not result.isError
     let content = result.response.result["content"][0]["text"].getStr()
-    check "Shibboleet says: Leet greetings from the universe! Hello, friend!" in content
+    check content.contains("Shibboleet says: Leet greetings from the universe! Hello, friend!")
 
   test "tools/call with custom recipient":
     # First initialize the server
@@ -83,7 +83,7 @@ suite "MCP Core Tests":
     
     check not result.isError
     let content = result.response.result["content"][0]["text"].getStr()
-    check "Shibboleet says: Leet greetings from the universe! Hello, Monofuel!" in content
+    check content.contains("Shibboleet says: Leet greetings from the universe! Hello, Monofuel!")
 
   test "error on uninitialized server":
     let listRequest = """{"jsonrpc":"2.0","id":5,"method":"tools/list","params":{}}"""
@@ -91,7 +91,7 @@ suite "MCP Core Tests":
     
     check result.isError
     check result.error.error.code == -32001
-    check "not initialized" in result.error.error.message
+    check result.error.error.message.contains("not initialized")
 
   test "error on unknown tool":
     # First initialize the server
@@ -103,11 +103,11 @@ suite "MCP Core Tests":
     
     check result.isError
     check result.error.error.code == -32602
-    check "Unknown tool name" in result.error.error.message
+    check result.error.error.message.contains("Unknown tool name")
 
   test "error on invalid JSON":
     let invalidRequest = """{"invalid":"json","missing":"required fields"}"""
     let result = server.handleRequest(invalidRequest)
     
     check result.isError
-    check result.error.error.code == -32700 
+    check result.error.error.code == -32600 

@@ -79,10 +79,10 @@ proc newHttpMcpServer*(mcpServer: McpServer, logEnabled: bool = true): HttpMcpSe
   httpMcpServer.httpServer = newServer(requestHandler)
   return httpMcpServer
 
-proc serve*(httpServer: HttpMcpServer, port: Port, address: string = "localhost") =
+proc serve*(httpServer: HttpMcpServer, port: int, address: string = "localhost") =
   ## Start serving the HTTP MCP server on the specified port and address.
-  httpServer.log(fmt"Starting HTTP MCP server on {address}:{port}")
-  httpServer.httpServer.serve(port, address)
+  httpServer.log(&"Starting HTTP MCP server on {address}:{port}")
+  httpServer.httpServer.serve(Port(port), address)
 
 proc close*(httpServer: HttpMcpServer) =
   ## Close the HTTP MCP server.

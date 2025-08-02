@@ -50,7 +50,7 @@ This approach ensures full stack traces in CI environments and makes debugging s
   - nim check does not return any text on success.
 
 - you can run unit tests with `nimble test`
-- make sure to run unit tests! they should always pass.
+- make sure to run unit tests after making changes! they should always pass.
 
 - `nimble benchmark` can be used to run benchmark tests.
 - benchmark is at ./tests/bench_fraggy.nim
@@ -144,3 +144,5 @@ let
   - early returns at the start of the file is ok.
 - try to make things as idempotent as possible. if a job runs every day, we should make sure it can be robust.
 - never use booleans for 'success' or 'error'. If a function was successful, return nothing and do not throw an error. if a function failed, throw an error.
+- code should fail fast and fail loudly. do not try to surpress warnings or ignore errors.
+- avoid doing function calls inside of format strings. Instead, please assign to variables to use in the format string.

@@ -1,5 +1,5 @@
 import
-  std/[unittest, json],
+  std/[unittest, json, tables, strutils],
   mcport/[mcp_core, mcp_server_stdio]
 
 suite "STDIO Server Tests":
@@ -9,8 +9,8 @@ suite "STDIO Server Tests":
     
     check server.serverInfo.name == "NimMCPServer"
     check server.serverInfo.version == "1.0.0"
-    check "secret_fetcher" in server.tools
-    check "secret_fetcher" in server.toolHandlers
+    check server.tools.hasKey("secret_fetcher")
+    check server.toolHandlers.hasKey("secret_fetcher")
 
   test "example server tool functionality":
     let server = createExampleServer()
@@ -26,7 +26,7 @@ suite "STDIO Server Tests":
     
     check not callResult.isError
     let content = callResult.response.result["content"][0]["text"].getStr()
-    check "Shibboleet says: Leet greetings from the universe! Hello, TestUser!" in content
+    check content.contains("Shibboleet says: Leet greetings from the universe! Hello, TestUser!")
 
   test "example server with default recipient":
     let server = createExampleServer()
@@ -41,7 +41,7 @@ suite "STDIO Server Tests":
     
     check not callResult.isError
     let content = callResult.response.result["content"][0]["text"].getStr()
-    check "Shibboleet says: Leet greetings from the universe! Hello, friend!" in content
+    check content.contains("Shibboleet says: Leet greetings from the universe! Hello, friend!")
 
   test "stdio server handles multiple requests":
     let server = createExampleServer()
@@ -63,4 +63,4 @@ suite "STDIO Server Tests":
       let callResult = server.handleRequest(callRequest)
       check not callResult.isError
       let content = callResult.response.result["content"][0]["text"].getStr()
-      check ("Hello, User" & $i & "!") in content 
+      check content.contains("Hello, User" & $i & "!") 

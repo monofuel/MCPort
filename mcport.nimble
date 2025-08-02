@@ -7,5 +7,4 @@ srcDir = "src"
 
 requires "nim >= 2.0.0"
 requires "jsony >= 1.1.5"
-requires "curly >= 1.1.1"
 requires "mummy >= 0.4.7"

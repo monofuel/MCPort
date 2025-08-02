@@ -1,5 +1,5 @@
 import
-  std/[unittest, json],
+  std/[unittest, json, tables, strutils],
   mcport/[mcp_core, mcp_server_http]
 
 suite "HTTP Server Tests":
@@ -23,8 +23,8 @@ suite "HTTP Server Tests":
     
     check httpServer.server.serverInfo.name == "NimHTTPMCPServer"
     check httpServer.server.serverInfo.version == "1.0.0"
-    check "secret_fetcher" in httpServer.server.tools
-    check "secret_fetcher" in httpServer.server.toolHandlers
+    check httpServer.server.tools.hasKey("secret_fetcher")
+    check httpServer.server.toolHandlers.hasKey("secret_fetcher")
 
   test "example http server tool functionality":
     let httpServer = createExampleHttpServer()
@@ -41,7 +41,7 @@ suite "HTTP Server Tests":
     
     check not callResult.isError
     let content = callResult.response.result["content"][0]["text"].getStr()
-    check "Shibboleet says: Leet greetings from the universe! Hello, HTTPUser!" in content
+    check content.contains("Shibboleet says: Leet greetings from the universe! Hello, HTTPUser!")
 
   test "http server json-rpc protocol compliance":
     let httpServer = createExampleHttpServer()
