@@ -68,14 +68,20 @@ proc initialize*(client: HttpMcpClient) =
   if not client.client.handleInitializeResponse(initResult):
     raise newException(CatchableError, "Failed to process initialize response")
   
-  # For HTTP, we typically don't send the initialized notification
-  # but let's send it for protocol compliance
+  # For HTTP, notifications don't expect responses - just send and continue
   let notification = createNotificationInitialized()
-  let notificationResult = client.sendRequest(notification)
-  
-  if notificationResult.isError:
-    let errorMessage = notificationResult.error.error.message
-    client.log(fmt"Initialized notification failed: {errorMessage}")
+  try:
+    let jsonRequest = notification.toJson()
+    client.log(fmt"Sending notification: {jsonRequest}")
+    
+    let response = client.httpClient.postContent(client.baseUrl, body = jsonRequest)
+    client.log(fmt"Notification response: {response}")
+    # Don't parse response for notifications - just log success
+  except HttpRequestError as e:
+    client.log(fmt"Notification request failed: {e.msg}")
+    # Don't fail on notification error - it's not critical for HTTP
+  except Exception as e:
+    client.log(fmt"Notification failed: {e.msg}")
     # Don't fail on notification error - it's not critical for HTTP
   
   client.log("Successfully initialized")

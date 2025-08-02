@@ -11,14 +11,20 @@ proc demonstrateStdioClient() =
   
   let client = newStdioMcpClient("ExampleStdioClient", "1.0.0")
   
-  # For this example, we'll compile and run the stdio server from the codebase
-  # This demonstrates connecting to a real MCP server
-  let serverPath = "nim"
-  let serverArgs = @["c", "-r", "../src/mcport/mcp_server_stdio.nim"]
+  # Compile the server first to avoid mixing compilation output with MCP communication
+  echo "Compiling STDIO MCP server..."
+  let compileResult = execCmd("nim c src/mcport/mcp_server_stdio.nim")
+  if compileResult != 0:
+    raise newException(CatchableError, "Failed to compile STDIO MCP server")
+  
+  # Now run the compiled binary
+  let serverPath = "src/mcport/mcp_server_stdio"
+  let serverArgs: seq[string] = @[]
   
   echo fmt"Attempting to connect to server: {serverPath}"
   
   # Connect and initialize (this launches the server process)
+  # Now throws exceptions directly instead of returning booleans
   client.connectAndInitialize(serverPath, serverArgs)
   echo "✅ Successfully connected and initialized!"
   
@@ -61,14 +67,20 @@ proc demonstrateHttpClient() =
   ## Example of using the HTTP client to connect to an MCP server.
   echo "\n=== HTTP Client Example ==="
   
-  # Start the HTTP server using startProcess
+  # Compile the HTTP server first
+  echo "Compiling HTTP MCP server..."
+  let compileResult = execCmd("nim c src/mcport/mcp_server_http.nim")
+  if compileResult != 0:
+    raise newException(CatchableError, "Failed to compile HTTP MCP server")
+  
+  # Start the HTTP server using the compiled binary
   echo "Starting HTTP MCP server..."
-  let serverProcess = startProcess("nim", args = @["c", "-r", "../src/mcport/mcp_server_http.nim"], 
+  let serverProcess = startProcess("src/mcport/mcp_server_http", 
                                    options = {poUsePath, poStdErrToStdOut})
   
-  # Give the server more time to compile and start up - 5 seconds should be enough
-  echo "Waiting for server to compile and start..."
-  sleep(5000)  # 5 seconds
+  # Give the server time to start up - 3 seconds should be enough since it's pre-compiled
+  echo "Waiting for server to start..."
+  sleep(3000)  # 3 seconds
   
   # Use the correct port that the server actually runs on (8097)
   let client = newHttpMcpClient("ExampleHttpClient", "1.0.0", "http://localhost:8097")
@@ -177,8 +189,8 @@ proc main() =
   
   echo "\n=== All Examples Complete ==="
   echo "Both examples now automatically start their own MCP servers:"
-  echo "1. STDIO: Compiles and runs ../src/mcport/mcp_server_stdio.nim"
-  echo "2. HTTP: Compiles and runs ../src/mcport/mcp_server_http.nim on localhost:8097"
+  echo "1. STDIO: Compiles and runs src/mcport/mcp_server_stdio.nim"
+  echo "2. HTTP: Compiles and runs src/mcport/mcp_server_http.nim on localhost:8097"
 
 when isMainModule:
   main() 
