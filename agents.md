@@ -52,8 +52,7 @@ This approach ensures full stack traces in CI environments and makes debugging s
 - you can run unit tests with `nimble test`
 - make sure to run unit tests after making changes! they should always pass.
 
-- `nimble benchmark` can be used to run benchmark tests.
-- benchmark is at ./tests/bench_fraggy.nim
+- `nimble benchmark` can be used to run benchmark tests with the benchy library.
 
 - do not `echo` in tests, they should not log anything when successful
 
