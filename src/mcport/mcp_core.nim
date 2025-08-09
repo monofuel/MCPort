@@ -114,22 +114,26 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
     
     # Check if it has an 'id' field - if not, it's a notification
     if not parsed.hasKey("id"):
-      # This is a notification - handle it but don't return a response
-      # Just validate it's a proper notification and return empty result
+      # This is a notification - validate minimal JSON-RPC shape
+      if not parsed.hasKey("jsonrpc") or parsed["jsonrpc"].kind != JString or parsed["jsonrpc"].getStr() != "2.0" or
+         not parsed.hasKey("method") or parsed["method"].kind != JString:
+        # Invalid Request (syntactically JSON, but not a valid JSON-RPC object)
+        return McpResult(
+          isError: true,
+          error: createError(0, -32600, "Invalid Request")
+        )
+
+      # Now it's safe to parse as a proper RpcNotification
       let notification = line.fromJson(RpcNotification)
-      if notification.jsonrpc != "2.0":
-        # For malformed notifications, we still shouldn't respond
-        return McpResult(isError: false, response: createResponse(0, %*{}))
-      
+
       case notification.`method`
       of "notifications/initialized":
         if not server.initialized:
-          # Log warning but don't return error for notifications
           discard
       else:
         # Unknown notification method - just ignore it
         discard
-      
+
       # For notifications, return a dummy response that won't be sent
       return McpResult(isError: false, response: createResponse(0, %*{}))
     
