@@ -225,9 +225,10 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         )
     
     of "resources/list", "prompts/list", "resources/read", "get_resource":
+      # TODO do these!
       return McpResult(
         isError: true,
-        error: createError(request.id, -32601, "Method not supported")
+        error: createError(request.id, -32601, "TODO Method implemented yet")
       )
     
     else:
