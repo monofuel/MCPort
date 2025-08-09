@@ -143,11 +143,11 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
 
     case request.`method`
     of "initialize":
-      if server.initialized:
-        return McpResult(
-          isError: true,
-          error: createError(request.id, -32000, "Already initialized")
-        )
+      # if server.initialized:
+      #   return McpResult(
+      #     isError: true,
+      #     error: createError(request.id, -32000, "Already initialized")
+      #   )
       
       discard request.params.toJson().fromJson(InitParams)  # Validate params
       let response = createResponse(request.id, %*{

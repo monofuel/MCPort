@@ -29,16 +29,17 @@ proc handleJsonRpcRequest(httpServer: HttpMcpServer, request: Request) =
       request.respond(405, body = "Method not allowed - use POST for JSON-RPC requests")
       return
     
-    # Check content type
+    # Check content type (accept parameters like charset)
     var contentType = ""
     for (key, value) in request.headers:
       if key.toLowerAscii() == "content-type":
         contentType = value
         break
     
-    if contentType != "application/json":
+    let ct = contentType.toLowerAscii().strip()
+    if ct.len == 0 or not ct.startsWith("application/json"):
       httpServer.log("Rejected /mcp request with invalid content-type: " & contentType)
-      request.respond(400, body = "Content-Type must be application/json")
+      request.respond(400, body = "Content-Type must start with application/json")
       return
     
     # Optional authorization check using provided callback
