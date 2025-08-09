@@ -6,6 +6,7 @@ Nim library for building Model Context Protocol (MCP) servers and clients. Suppo
 - Warning: this is a work in progress!
 - the MCP client code has not been extensively tested.
 - the MCP server currently logs everything out to console, including any sensitive data in requests, so be careful.
+- http server does not use tls, you should wrap this with a reverse proxy for security (eg: nginx + certbot).
 
 ### Features
 - **Servers and clients**: Build MCP clients and servers.
