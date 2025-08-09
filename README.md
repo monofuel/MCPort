@@ -3,6 +3,10 @@
 Nim library for building Model Context Protocol (MCP) servers and clients. Supports STDIO and HTTP transports.
 [Model Context Protocol](https://modelcontextprotocol.io/docs/getting-started/intro).
 
+- Warning: this is a work in progress!
+- the MCP client code has not been extensively tested.
+- the MCP server currently logs everything out to console, including any sensitive data in requests, so be careful.
+
 ### Features
 - **Servers and clients**: Build MCP clients and servers.
 - **Transports**: STDIO and HTTP.
