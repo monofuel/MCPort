@@ -166,9 +166,12 @@ proc newHttpMcpServer*(mcpServer: McpServer, logEnabled: bool = true, authCb: Au
     httpMcpServer.log(&"Invalid route accessed: {request.uri}")
     request.respond(404, body = "Not found - valid endpoints: /mcp, /server-info")
   
+  # main MCP endpoint!
   router.post("/mcp", mcpHandler)
+
+  # server-info is not part of the MCP spec but useful for debugging.
   router.get("/server-info", serverInfoHandler)
-  router.post("/server-info", serverInfoHandler)  # Support both GET and POST
+  router.post("/server-info", serverInfoHandler)
   
   # Add catch-all routes for invalid endpoints
   router.get("/*", invalidRouteHandler)
