@@ -15,8 +15,8 @@ jobs:
         nim-version: stable
     - name: Install packages
       run: |
-        apt-get update
-        apt-get install -y ripgrep curl wget dnsutils ca-certificates libpcre3-dev
+        sudo apt-get update
+        sudo sudo apt-get install -y ripgrep curl wget dnsutils ca-certificates libpcre3-dev
     - name: Cache nimble packages
       uses: actions/cache@v3
       with:
