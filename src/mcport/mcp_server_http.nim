@@ -6,10 +6,13 @@ import
   ./mcp_core
 
 type
+  AuthCallback* = proc(request: Request): bool {.gcsafe.}
+
   HttpMcpServer* = ref object
     server*: McpServer
     httpServer*: Server
     logEnabled*: bool
+    authCb*: AuthCallback  ## Optional auth callback for HTTP requests
 
 proc log(httpServer: HttpMcpServer, msg: string) =
   ## Log a message with timestamp if logging is enabled.
@@ -37,6 +40,20 @@ proc handleJsonRpcRequest(httpServer: HttpMcpServer, request: Request) =
       httpServer.log("Rejected /mcp request with invalid content-type: " & contentType)
       request.respond(400, body = "Content-Type must be application/json")
       return
+    
+    # Optional authorization check using provided callback
+    if httpServer.authCb != nil:
+      var isAuthorized = false
+      try:
+        isAuthorized = httpServer.authCb(request)
+      except Exception as e:
+        httpServer.log("Auth callback error: " & e.msg)
+        isAuthorized = false
+      if not isAuthorized:
+        var headers: HttpHeaders
+        headers["content-type"] = "application/json"
+        request.respond(401, headers, "{\"error\":\"Unauthorized\"}")
+        return
     
     # Handle the MCP JSON-RPC request using the core server
     httpServer.log("Received JSON-RPC request: " & request.body)
@@ -76,6 +93,20 @@ proc handleServerInfoRequest(httpServer: HttpMcpServer, request: Request) =
       request.respond(405, body = "Method not allowed - use GET or POST for server info")
       return
     
+    # Optional authorization check using provided callback
+    if httpServer.authCb != nil:
+      var isAuthorized = false
+      try:
+        isAuthorized = httpServer.authCb(request)
+      except Exception as e:
+        httpServer.log("Auth callback error: " & e.msg)
+        isAuthorized = false
+      if not isAuthorized:
+        var headers: HttpHeaders
+        headers["content-type"] = "application/json"
+        request.respond(401, headers, "{\"error\":\"Unauthorized\"}")
+        return
+    
     # Create server metadata response
     let serverInfo = %*{
       "name": httpServer.server.serverInfo.name,
@@ -100,11 +131,12 @@ proc handleServerInfoRequest(httpServer: HttpMcpServer, request: Request) =
     httpServer.log("Error handling server info request: " & e.msg)
     request.respond(500, body = "Error generating server information")
 
-proc newHttpMcpServer*(mcpServer: McpServer, logEnabled: bool = true): HttpMcpServer =
+proc newHttpMcpServer*(mcpServer: McpServer, logEnabled: bool = true, authCb: AuthCallback = nil): HttpMcpServer =
   ## Create a new HTTP MCP server wrapper.
   let httpMcpServer = HttpMcpServer(
     server: mcpServer,
-    logEnabled: logEnabled
+    logEnabled: logEnabled,
+    authCb: authCb
   )
   
   # Set up router with MCP endpoints
