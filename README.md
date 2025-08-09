@@ -1,6 +1,6 @@
 ## MCPort ⚙️
 
-![glowing blue computers](static/83c2e815-412c-42a8-85c9-e01df76a429b.png "Why doesn't your computer have a giant blue crystal?")
+![glowing blue computers](static/crystal_computer.png "Why doesn't your computer have a giant blue crystal?")
 
 Nim library for building Model Context Protocol (MCP) servers and clients. Supports STDIO and HTTP transports.
 [Model Context Protocol](https://modelcontextprotocol.io/docs/getting-started/intro).
