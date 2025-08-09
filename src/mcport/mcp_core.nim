@@ -147,6 +147,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
 
     case request.`method`
     of "initialize":
+      # NB. some clients seem to send initialize requests multiple times.
       # if server.initialized:
       #   return McpResult(
       #     isError: true,

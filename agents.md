@@ -1,17 +1,19 @@
 # MCPort
 
-- MCPort is a nim library for either providing an MCP server, or acting as an MCP Client.
+- MCPort is a nim library for either providing an MCP server, or acting as an MCP Client, for both stdio and http.
 - it's intended to be imported by another program and used.
 
 - MCP is Model Context Protocol by Anthropic.
+  - https://modelcontextprotocol.io/docs/getting-started/intro
 
 ## Organization
 
-- src/mcport/mcp_server.nim is for the MCP server
-- src/mcport/mcp_client.nim is for the MCP Client.
+- MCPort/src/mcport/mcp_server_http.nim is for the MCP http server
+- MCPort/src/mcport/mcp_client_http.nim is for the MCP http client.
+- MCPort/src/mcport/mcp_server_stdio.nim is for the MCP stdio server
+- MCPort/src/mcport/mcp_client_stdio.nim is for the MCP stdio client.
 
 - tests/* has all the tests
-  - tests for the mcp http server, and stdio server
 
 ## Nim best practices
 

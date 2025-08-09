@@ -77,7 +77,7 @@ proc createCustomServer(): McpServer =
     let a = arguments["a"].getFloat()
     let b = arguments["b"].getFloat()
     
-    let result = case operation:
+    let calcResult = case operation:
       of "add": a + b
       of "subtract": a - b
       of "multiply": a * b
@@ -88,7 +88,7 @@ proc createCustomServer(): McpServer =
       else:
         raise newException(ValueError, "Unknown operation")
     
-    return %*result
+    return %*calcResult
   
   server.registerTool(mathTool, mathHandler)
   
@@ -104,7 +104,7 @@ proc main() =
     let httpServer = newHttpMcpServer(mcpServer)
     echo "Starting HTTP MCP server on http://localhost:8080"
     echo "Send JSON-RPC requests to this endpoint with Content-Type: application/json"
-    httpServer.serve(Port(8080), "0.0.0.0")
+    httpServer.serve(8080, "0.0.0.0")
   else:
     # Run STDIO server (default)
     echo "Starting STDIO MCP server..."

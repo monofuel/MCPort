@@ -1,41 +1,22 @@
 import
-  std/[streams, times, strformat, strutils, json],
+  std/[streams, strutils, json],
   jsony,
   ./mcp_core
 
-const
-  LOG_FILE = "mcp_server.log"  ## Log file path
-
-var
-  logFile: File
-
-proc logToFile(stream: char, msg: string) =
-  ## Log a message to file and stderr with stream prefix.
-  let timestamp = now().format("yyyy-MM-dd HH:mm:ss")
-  let formattedMsg = fmt"[{timestamp}] {stream} {msg}"
-  
-  if logFile.isNil:
-    logFile = open(LOG_FILE, fmAppend)
-  logFile.writeLine(formattedMsg)
-  logFile.flushFile()
-
 proc log*(msg: string) =
-  ## Log to stderr and file with 'E' prefix.
-  logToFile('E', msg)
   stderr.writeLine(msg)
   stderr.flushFile()
 
 proc sendMcpMessage[T](msg: T) =
-  ## Send a properly formatted JSON-RPC message to stdout and log it.
+  ## Send a properly formatted JSON-RPC message to stdout.
   let jsonMsg = msg.toJson()
   stdout.write(jsonMsg)
   stdout.write("\n")
   stdout.flushFile()
-  logToFile('O', "Sent: " & jsonMsg)
+
 
 proc handleStdioRequest(server: McpServer, line: string) =
   ## Handle an incoming MCP request from stdin using the core server.
-  logToFile('I', line)
   
   # Check if the incoming message is a notification (no 'id' field) or request (has 'id' field)
   let isNotification = try:
@@ -63,9 +44,6 @@ proc runStdioServer*(server: McpServer) =
       log("Received: " & line)
       handleStdioRequest(server, line.strip())
   
-  if not logFile.isNil:
-    log("Server shutting down...")
-    logFile.close()
 
 proc createExampleServer*(): McpServer =
   ## Create an example MCP server with a sample tool.
