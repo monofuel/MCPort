@@ -51,6 +51,24 @@ suite "MCP Core Tests":
 
     server.registerPrompt(codeReviewPrompt, codeReviewHandler)
 
+    # Register a test resource
+    let configResource = McpResource(
+      uri: "config://test-server",
+      name: some("Test Server Config"),
+      description: some("Test server configuration"),
+      mimeType: some("application/json")
+    )
+
+    proc configHandler(uri: string): ResourceContent =
+      let config = %*{
+        "server": "test",
+        "version": "1.0.0",
+        "environment": "testing"
+      }
+      return ResourceContent(isText: true, text: $config)
+
+    server.registerResource(configResource, configHandler)
+
   test "server creation":
     check server.serverInfo.name == "TestServer"
     check server.serverInfo.version == "1.0.0"
@@ -197,4 +215,59 @@ suite "MCP Core Tests":
 
     check result.isError
     check result.error.error.code == -32602
-    check result.error.error.message.contains("Unknown prompt name") 
+    check result.error.error.message.contains("Unknown prompt name")
+
+  test "resource registration":
+    check server.resources.hasKey("config://test-server")
+    check server.resourceHandlers.hasKey("config://test-server")
+
+  test "resources/list request":
+    # First initialize the server
+    let initRequest = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"""
+    discard server.handleRequest(initRequest)
+
+    let listRequest = """{"jsonrpc":"2.0","id":12,"method":"resources/list","params":{}}"""
+    let result = server.handleRequest(listRequest)
+
+    check not result.isError
+    let resources = result.response.result["resources"]
+    check resources.len == 1
+    check resources[0]["uri"].getStr() == "config://test-server"
+    check resources[0]["name"].getStr() == "Test Server Config"
+    check resources[0]["mimeType"].getStr() == "application/json"
+
+  test "resources/read request with text content":
+    # First initialize the server
+    let initRequest = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"""
+    discard server.handleRequest(initRequest)
+
+    let readRequest = """{"jsonrpc":"2.0","id":13,"method":"resources/read","params":{"uri":"config://test-server"}}"""
+    let result = server.handleRequest(readRequest)
+
+    check not result.isError
+    let contents = result.response.result["contents"]
+    check contents.len == 1
+    check contents[0].hasKey("text")
+    let text = contents[0]["text"].getStr()
+    check text.contains("\"server\":\"test\"")
+    check text.contains("\"version\":\"1.0.0\"")
+
+  test "error on uninitialized server for resources":
+    let listRequest = """{"jsonrpc":"2.0","id":14,"method":"resources/list","params":{}}"""
+    let result = server.handleRequest(listRequest)
+
+    check result.isError
+    check result.error.error.code == -32001
+    check result.error.error.message.contains("not initialized")
+
+  test "error on unknown resource URI":
+    # First initialize the server
+    let initRequest = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"""
+    discard server.handleRequest(initRequest)
+
+    let readRequest = """{"jsonrpc":"2.0","id":15,"method":"resources/read","params":{"uri":"config://unknown"}}"""
+    let result = server.handleRequest(readRequest)
+
+    check result.isError
+    check result.error.error.code == -32602
+    check result.error.error.message.contains("Unknown resource URI") 

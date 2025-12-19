@@ -112,6 +112,26 @@ proc createCustomServer(): McpServer =
 
   server.registerPrompt(codeReviewPrompt, codeReviewHandler)
 
+  # Resource: Server configuration
+  let configResource = McpResource(
+    uri: "config://server-info",
+    name: some("Server Configuration"),
+    description: some("Current server configuration and settings"),
+    mimeType: some("application/json")
+  )
+
+  proc configHandler(uri: string): ResourceContent =
+    let config = %*{
+      "server_name": "ExampleMCPServer",
+      "version": "1.0.0",
+      "features": ["tools", "prompts", "resources"],
+      "uptime": "simulated",
+      "environment": "development"
+    }
+    return ResourceContent(isText: true, text: $config)
+
+  server.registerResource(configResource, configHandler)
+
   return server
 
 proc main() =

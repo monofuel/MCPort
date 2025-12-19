@@ -38,13 +38,17 @@ type
   ServerCapabilities* = object
     tools*: ToolCaps
     prompts*: PromptCaps
+    resources*: ResourceCaps
 
   ToolCaps* = object
     listChanged*: bool
 
   PromptCaps* = object
     listChanged*: bool
-    
+
+  ResourceCaps* = object
+    listChanged*: bool
+
   ServerInfo* = object
     name*: string
     version*: string
@@ -75,6 +79,8 @@ type
     toolHandlers*: Table[string, ToolHandler]
     prompts*: Table[string, McpPrompt]
     promptHandlers*: Table[string, PromptHandler]
+    resources*: Table[string, McpResource]
+    resourceHandlers*: Table[string, ResourceHandler]
 
   PromptArgument* = object
     name*: string
@@ -96,6 +102,24 @@ type
 
   PromptHandler* = proc(arguments: JsonNode): seq[PromptMessage] {.gcsafe.}
 
+  McpResource* = object
+    uri*: string
+    name*: Option[string]
+    description*: Option[string]
+    mimeType*: Option[string]
+
+  ResourceContent* = object
+    case isText*: bool
+    of true:
+      text*: string
+    of false:
+      blob*: string  # base64-encoded binary data (TODO: implement)
+
+  ResourceHandler* = proc(uri: string): ResourceContent {.gcsafe.}
+
+  ReadResourceParams* = object
+    uri*: string
+
   McpResult* = object
     case isError*: bool
     of true:
@@ -110,12 +134,15 @@ proc newMcpServer*(name: string, version: string): McpServer =
     serverInfo: ServerInfo(name: name, version: version),
     capabilities: ServerCapabilities(
       tools: ToolCaps(listChanged: true),
-      prompts: PromptCaps(listChanged: true)
+      prompts: PromptCaps(listChanged: true),
+      resources: ResourceCaps(listChanged: true)
     ),
     tools: initTable[string, McpTool](),
     toolHandlers: initTable[string, ToolHandler](),
     prompts: initTable[string, McpPrompt](),
-    promptHandlers: initTable[string, PromptHandler]()
+    promptHandlers: initTable[string, PromptHandler](),
+    resources: initTable[string, McpResource](),
+    resourceHandlers: initTable[string, ResourceHandler]()
   )
 
 proc registerTool*(server: McpServer, tool: McpTool, handler: ToolHandler) =
@@ -127,6 +154,11 @@ proc registerPrompt*(server: McpServer, prompt: McpPrompt, handler: PromptHandle
   ## Register a prompt with the MCP server.
   server.prompts[prompt.name] = prompt
   server.promptHandlers[prompt.name] = handler
+
+proc registerResource*(server: McpServer, resource: McpResource, handler: ResourceHandler) =
+  ## Register a resource with the MCP server.
+  server.resources[resource.uri] = resource
+  server.resourceHandlers[resource.uri] = handler
 
 proc createError*(id: int, code: int, message: string): RpcError =
   ## Create an RPC error response.
@@ -200,6 +232,9 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
             "listChanged": true
           },
           "prompts": {
+            "listChanged": true
+          },
+          "resources": {
             "listChanged": true
           }
         },
@@ -342,11 +377,67 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
           error: createError(request.id, -32602, "Unknown prompt name")
         )
 
-    of "resources/list", "resources/read", "get_resource":
-      # TODO do these!
+    of "resources/list":
+      if not server.initialized:
+        return McpResult(
+          isError: true,
+          error: createError(request.id, -32001, "Server not initialized")
+        )
+
+      discard request.params.toJson().fromJson(ListParams)  # Validate params
+      # TODO: Add pagination support with cursor
+      var resourcesArray = newJArray()
+
+      for resource in server.resources.values:
+        resourcesArray.add(%*{
+          "uri": resource.uri,
+          "name": resource.name.get(""),
+          "description": resource.description.get(""),
+          "mimeType": resource.mimeType.get("")
+        })
+
+      let response = createResponse(request.id, %*{
+        "resources": resourcesArray
+      })
+      return McpResult(isError: false, response: response)
+
+    of "resources/read":
+      if not server.initialized:
+        return McpResult(
+          isError: true,
+          error: createError(request.id, -32001, "Server not initialized")
+        )
+
+      let params = request.params.toJson().fromJson(ReadResourceParams)
+      if params.uri in server.resourceHandlers:
+        try:
+          let content = server.resourceHandlers[params.uri](params.uri)
+          var contentObj = %*{}
+          if content.isText:
+            contentObj["text"] = %content.text
+          else:
+            contentObj["blob"] = %content.blob  # TODO: implement blob support
+
+          let response = createResponse(request.id, %*{
+            "contents": [contentObj]
+          })
+          return McpResult(isError: false, response: response)
+        except Exception as e:
+          return McpResult(
+            isError: true,
+            error: createError(request.id, -32603, "Resource read failed: " & e.msg)
+          )
+      else:
+        return McpResult(
+          isError: true,
+          error: createError(request.id, -32602, "Unknown resource URI")
+        )
+
+    of "get_resource":
+      # TODO do this! (legacy method, might be deprecated)
       return McpResult(
         isError: true,
-        error: createError(request.id, -32601, "TODO Method implemented yet")
+        error: createError(request.id, -32601, "get_resource method not implemented")
       )
     
     else:
