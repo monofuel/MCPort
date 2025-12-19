@@ -106,7 +106,7 @@ proc createCustomServer(): McpServer =
     return @[
       PromptMessage(
         role: "user",
-        content: TextContent(`type`: "text", text: "Please review this code and provide feedback on quality, potential improvements, and best practices:\n\n" & code)
+        content: textPromptContent("Please review this code and provide feedback on quality, potential improvements, and best practices:\n\n" & code)
       )
     ]
 

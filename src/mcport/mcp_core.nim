@@ -100,12 +100,13 @@ type
 
   McpPrompt* = object
     name*: string
+    title*: Option[string]
     description*: Option[string]
     arguments*: seq[PromptArgument]
 
   PromptMessage* = object
     role*: string  # "user" or "assistant"
-    content*: TextContent  # TODO: Add support for other content types
+    content*: PromptContent
 
   TextContent* = object
     `type`*: string  # "text"
@@ -149,6 +150,20 @@ type
     of tctResourceLink:
       resourceLinkContent*: ResourceLinkContent
     of tctResource:
+      embeddedResourceContent*: EmbeddedResourceContent
+
+  PromptContentType* = enum
+    pctText, pctImage, pctAudio, pctResource
+
+  PromptContent* = object
+    case kind*: PromptContentType
+    of pctText:
+      textContent*: TextContent
+    of pctImage:
+      imageContent*: ImageContent
+    of pctAudio:
+      audioContent*: AudioContent
+    of pctResource:
       embeddedResourceContent*: EmbeddedResourceContent
 
   ToolResult* = object
@@ -255,6 +270,14 @@ proc notifyToolsListChanged*(server: McpServer) =
       "method": "notifications/tools/list_changed"
     })
 
+proc notifyPromptsListChanged*(server: McpServer) =
+  ## Send a prompts list changed notification.
+  if server.notificationCallback.isSome:
+    server.notificationCallback.get()(%*{
+      "jsonrpc": "2.0",
+      "method": "notifications/prompts/list_changed"
+    })
+
 proc notifyResourceUpdated*(server: McpServer, uri: string) =
   ## Send a resource updated notification for subscribed resources.
   if server.resourceSubscriptions.contains(uri) and server.notificationCallback.isSome:
@@ -278,6 +301,12 @@ proc registerPrompt*(server: McpServer, prompt: McpPrompt, handler: PromptHandle
   ## Register a prompt with the MCP server.
   server.prompts[prompt.name] = prompt
   server.promptHandlers[prompt.name] = handler
+  # Notify that prompts list has changed
+  if server.notificationCallback.isSome:
+    server.notificationCallback.get()(%*{
+      "jsonrpc": "2.0",
+      "method": "notifications/prompts/list_changed"
+    })
 
 proc registerResource*(server: McpServer, resource: McpResource, handler: ResourceHandler) =
   ## Register a resource with the MCP server.
@@ -368,6 +397,54 @@ proc toolContentToJson*(content: ToolContent): JsonNode =
       obj["annotations"] = content.resourceLinkContent.annotations.get
     return obj
   of tctResource:
+    var obj = %*{
+      "type": "resource",
+      "resource": content.embeddedResourceContent.resource
+    }
+    if content.embeddedResourceContent.annotations.isSome:
+      obj["annotations"] = content.embeddedResourceContent.annotations.get
+    return obj
+
+proc textPromptContent*(text: string): PromptContent =
+  ## Create text content for prompt messages.
+  PromptContent(kind: pctText, textContent: TextContent(`type`: "text", text: text))
+
+proc imagePromptContent*(data: string, mimeType: string, annotations: Option[JsonNode] = none(JsonNode)): PromptContent =
+  ## Create image content for prompt messages.
+  PromptContent(kind: pctImage, imageContent: ImageContent(`type`: "image", data: data, mimeType: mimeType, annotations: annotations))
+
+proc audioPromptContent*(data: string, mimeType: string): PromptContent =
+  ## Create audio content for prompt messages.
+  PromptContent(kind: pctAudio, audioContent: AudioContent(`type`: "audio", data: data, mimeType: mimeType))
+
+proc embeddedResourcePromptContent*(resource: JsonNode, annotations: Option[JsonNode] = none(JsonNode)): PromptContent =
+  ## Create embedded resource content for prompt messages.
+  PromptContent(kind: pctResource, embeddedResourceContent: EmbeddedResourceContent(`type`: "resource", resource: resource, annotations: annotations))
+
+proc promptContentToJson*(content: PromptContent): JsonNode =
+  ## Convert PromptContent to JsonNode for serialization.
+  case content.kind:
+  of pctText:
+    return %*{
+      "type": "text",
+      "text": content.textContent.text
+    }
+  of pctImage:
+    var obj = %*{
+      "type": "image",
+      "data": content.imageContent.data,
+      "mimeType": content.imageContent.mimeType
+    }
+    if content.imageContent.annotations.isSome:
+      obj["annotations"] = content.imageContent.annotations.get
+    return obj
+  of pctAudio:
+    return %*{
+      "type": "audio",
+      "data": content.audioContent.data,
+      "mimeType": content.audioContent.mimeType
+    }
+  of pctResource:
     var obj = %*{
       "type": "resource",
       "resource": content.embeddedResourceContent.resource
@@ -552,14 +629,18 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
             "required": arg.required
           })
 
-        promptsArray.add(%*{
+        var promptObj = %*{
           "name": prompt.name,
           "description": prompt.description.get(""),
           "arguments": argsArray
-        })
+        }
+        if prompt.title.isSome:
+          promptObj["title"] = %prompt.title.get
+        promptsArray.add(promptObj)
 
       let response = createResponse(request.id, %*{
-        "prompts": promptsArray
+        "prompts": promptsArray,
+        "nextCursor": nil
       })
       return McpResult(isError: false, response: response)
 
@@ -587,10 +668,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
           for msg in messages:
             messagesArray.add(%*{
               "role": msg.role,
-              "content": {
-                "type": "text",
-                "text": msg.content.text
-              }
+              "content": promptContentToJson(msg.content)
             })
 
           let response = createResponse(request.id, %*{
