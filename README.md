@@ -2,30 +2,129 @@
 
 ![glowing blue computers](static/crystal_computer.png "Why doesn't your computer have a giant blue crystal?")
 
-Nim library for building Model Context Protocol (MCP) servers and clients. Supports STDIO and HTTP transports.
-[Model Context Protocol](https://modelcontextprotocol.io/docs/getting-started/intro).
+Nim library for building [Model Context Protocol](https://modelcontextprotocol.io/docs/getting-started/intro) servers and clients.
 
-- Warning: this is a work in progress!
-- the MCP client code has not been extensively tested.
-- the MCP server currently logs everything out to console, including any sensitive data in requests, so be careful.
-- http server does not use tls, you should wrap this with a reverse proxy for security (eg: nginx + certbot).
+## Building an MCP Server
 
-### Features
-- **Servers and clients**: Build MCP clients and servers.
-- **Transports**: STDIO and HTTP.
-- **Simple tools**: Register tools with JSON schema inputs and text outputs.
-- **Type-safe**: Strongly typed JSON-RPC messages with Nim.
-- **Minimal deps**: uses `curly`, `jsony` and `mummy`.
+### Basic Server
 
-### Examples
+```nim
+import mcport, std/[json, options]
 
-Example Build and run:
-```bash
-nim c -r examples/simple_server.nim         # STDIO server
-nim c -r examples/simple_server.nim http    # HTTP server
+# Create server
+let server = newMcpServer("MyServer", "1.0.0")
+
+# Register a tool
+let tool = McpTool(
+  name: "greet",
+  description: "Greet someone",
+  inputSchema: %*{
+    "type": "object",
+    "properties": {
+      "name": {"type": "string", "description": "Name to greet"}
+    },
+    "required": ["name"]
+  }
+)
+
+proc greetHandler(arguments: JsonNode): JsonNode =
+  let name = arguments["name"].getStr()
+  return %*("Hello, " & name & "!")
+
+server.registerTool(tool, greetHandler)
+
+# Run server (STDIO transport)
+runStdioServer(server)
 ```
 
-### Testing
+### Register a Prompt
+
+```nim
+let prompt = McpPrompt(
+  name: "code_review",
+  description: some("Review code quality"),
+  arguments: @[
+    PromptArgument(
+      name: "code",
+      description: some("Code to review"),
+      required: true
+    )
+  ]
+)
+
+proc promptHandler(arguments: JsonNode): seq[PromptMessage] =
+  let code = arguments["code"].getStr()
+  return @[
+    PromptMessage(
+      role: "user",
+      content: TextContent(`type`: "text", text: "Review this code:\n" & code)
+    )
+  ]
+
+server.registerPrompt(prompt, promptHandler)
+```
+
+### HTTP Transport
+
+```nim
+let httpServer = newHttpMcpServer(server)
+httpServer.serve(8080, "0.0.0.0")
+```
+
+## Building an MCP Client
+
+```nim
+import mcport, std/json
+
+let client = newMcpClient("MyClient", "1.0.0")
+
+# Create initialize request
+let initReq = client.createInitializeRequest()
+# Send via your transport and get response...
+
+# List tools
+let toolsReq = client.createToolsListRequest()
+# Send and handle response...
+
+# Call a tool
+let callReq = client.createToolCallRequest("greet", %*{"name": "World"})
+# Send and parse response...
+```
+
+## What's Implemented
+
+**Server:**
+- Tools: register, list, call (JSON schema + handlers)
+- Prompts: register, list, get (text content only)
+- Transports: STDIO, HTTP
+
+**Client:**
+- Tools: list, call
+- Transports: STDIO, HTTP
+
+**Not implemented:**
+- Resources
+- Prompt pagination, notifications, image/audio content
+- Tool/prompt list_changed notifications
+- Progress tracking
+
+See [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/) for protocol details.
+
+## Examples
+
+```bash
+nim c -r examples/simple_server.nim         # STDIO server
+nim c -r examples/simple_server.nim http    # HTTP server on port 8080
+```
+
+## Testing
+
 ```bash
 nimble test
 ```
+
+## Warnings
+
+- ⚠️ Client code not extensively tested
+- ⚠️ Server logs everything to console including sensitive data
+- ⚠️ HTTP has no TLS - use reverse proxy for production
