@@ -13,12 +13,17 @@ type
     httpServer*: Server
     logEnabled*: bool
     authCb*: AuthCallback  ## Optional auth callback for HTTP requests
+    notifications*: seq[JsonNode]  ## Queue of notifications for polling
 
 proc log(httpServer: HttpMcpServer, msg: string) =
   ## Log a message with timestamp if logging is enabled.
   if httpServer.logEnabled:
     let timestamp = now().format("yyyy-MM-dd HH:mm:ss")
     echo fmt"[{timestamp}] HTTP MCP: {msg}"
+
+proc httpNotificationCallback(httpServer: HttpMcpServer, notification: JsonNode) =
+  ## Notification callback for HTTP transport - stores notifications in queue.
+  httpServer.notifications.add(notification)
 
 proc handleJsonRpcRequest(httpServer: HttpMcpServer, request: Request) =
   ## Handle JSON-RPC requests to the /mcp endpoint.
@@ -93,7 +98,7 @@ proc handleServerInfoRequest(httpServer: HttpMcpServer, request: Request) =
       httpServer.log("Rejected invalid method for /server-info: " & request.httpMethod)
       request.respond(405, body = "Method not allowed - use GET or POST for server info")
       return
-    
+
     # Optional authorization check using provided callback
     if httpServer.authCb != nil:
       var isAuthorized = false
@@ -107,7 +112,7 @@ proc handleServerInfoRequest(httpServer: HttpMcpServer, request: Request) =
         headers["content-type"] = "application/json"
         request.respond(401, headers, "{\"error\":\"Unauthorized\"}")
         return
-    
+
     # Create server metadata response
     let serverInfo = %*{
       "name": httpServer.server.serverInfo.name,
@@ -120,24 +125,70 @@ proc handleServerInfoRequest(httpServer: HttpMcpServer, request: Request) =
       "tools_count": len(httpServer.server.tools),
       "description": "MCP Server over HTTP"
     }
-    
+
     var headers: HttpHeaders
     headers["content-type"] = "application/json"
-    
+
     let responseJson = serverInfo.toJson()
     httpServer.log("Sent server info response")
     request.respond(200, headers, responseJson)
-    
+
   except Exception as e:
     httpServer.log("Error handling server info request: " & e.msg)
     request.respond(500, body = "Error generating server information")
+
+proc handleNotificationsRequest(httpServer: HttpMcpServer, request: Request) =
+  ## Handle notification polling requests to the /notifications endpoint.
+  try:
+    # Accept GET requests for polling notifications
+    if request.httpMethod != "GET":
+      httpServer.log("Rejected invalid method for /notifications: " & request.httpMethod)
+      request.respond(405, body = "Method not allowed - use GET for notifications")
+      return
+
+    # Optional authorization check using provided callback
+    # TODO this is stupid, wtf is an 'optional test'? this is stupid
+    if httpServer.authCb != nil:
+      var isAuthorized = false
+      try:
+        isAuthorized = httpServer.authCb(request)
+      except Exception as e:
+        httpServer.log("Auth callback error: " & e.msg)
+        isAuthorized = false
+      if not isAuthorized:
+        var headers: HttpHeaders
+        headers["content-type"] = "application/json"
+        request.respond(401, headers, "{\"error\":\"Unauthorized\"}")
+        return
+
+    # Return all pending notifications and clear the queue
+    let notifications = httpServer.notifications
+    httpServer.notifications = @[]  # Clear the queue
+
+    let response = %*{"notifications": notifications}
+    var headers: HttpHeaders
+    headers["content-type"] = "application/json"
+
+    let responseJson = response.toJson()
+    httpServer.log(&"Sent {notifications.len} notifications")
+    request.respond(200, headers, responseJson)
+
+  except Exception as e:
+    httpServer.log("Error handling notifications request: " & e.msg)
+    request.respond(500, body = "Error retrieving notifications")
 
 proc newHttpMcpServer*(mcpServer: McpServer, logEnabled: bool = true, authCb: AuthCallback = nil): HttpMcpServer =
   ## Create a new HTTP MCP server wrapper.
   let httpMcpServer = HttpMcpServer(
     server: mcpServer,
     logEnabled: logEnabled,
-    authCb: authCb
+    authCb: authCb,
+    notifications: @[]
+  )
+
+  # Set up notification callback for the MCP server
+  mcpServer.setNotificationCallback(proc(notification: JsonNode) =
+    httpNotificationCallback(httpMcpServer, notification)
   )
   
   # Set up router with MCP endpoints
@@ -159,12 +210,17 @@ proc newHttpMcpServer*(mcpServer: McpServer, logEnabled: bool = true, authCb: Au
   proc serverInfoHandler(request: Request) {.gcsafe.} =
     loggingMiddleware(request)
     httpMcpServer.handleServerInfoRequest(request)
-  
+
+  # Notifications polling endpoint
+  proc notificationsHandler(request: Request) {.gcsafe.} =
+    loggingMiddleware(request)
+    httpMcpServer.handleNotificationsRequest(request)
+
   # Catch-all handler for invalid routes
   proc invalidRouteHandler(request: Request) {.gcsafe.} =
     loggingMiddleware(request)
     httpMcpServer.log(&"Invalid route accessed: {request.uri}")
-    request.respond(404, body = "Not found - valid endpoints: /mcp, /server-info")
+    request.respond(404, body = "Not found - valid endpoints: /mcp, /server-info, /notifications")
   
   # main MCP endpoint!
   router.post("/mcp", mcpHandler)
@@ -172,7 +228,10 @@ proc newHttpMcpServer*(mcpServer: McpServer, logEnabled: bool = true, authCb: Au
   # server-info is not part of the MCP spec but useful for debugging.
   router.get("/server-info", serverInfoHandler)
   router.post("/server-info", serverInfoHandler)
-  
+
+  # notifications polling endpoint
+  router.get("/notifications", notificationsHandler)
+
   # Add catch-all routes for invalid endpoints
   router.get("/*", invalidRouteHandler)
   router.post("/*", invalidRouteHandler)
@@ -188,6 +247,10 @@ proc serve*(httpServer: HttpMcpServer, port: int, address: string = "localhost")
   let portStr = $port
   httpServer.log(&"Starting HTTP MCP server on {address}:{portStr}")
   httpServer.httpServer.serve(Port(port), address)
+
+proc clearNotifications*(httpServer: HttpMcpServer) =
+  ## Clear all pending notifications (useful for testing).
+  httpServer.notifications = @[]
 
 proc close*(httpServer: HttpMcpServer) =
   ## Close the HTTP MCP server.

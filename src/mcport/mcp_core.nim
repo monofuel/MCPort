@@ -718,6 +718,28 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
             isError: true,
             error: createError(request.id, -32603, "Tool execution failed: " & e.msg)
           )
+      elif params.name in server.richToolHandlers:
+        # Use rich tool handler
+        try:
+          let toolResult = server.richToolHandlers[params.name](params.arguments)
+          var contentArray = newJArray()
+          for content in toolResult.content:
+            contentArray.add(toolContentToJson(content))
+
+          var responseObj = %*{
+            "content": contentArray,
+            "isError": toolResult.isError
+          }
+          if toolResult.structuredContent.isSome:
+            responseObj["structuredContent"] = toolResult.structuredContent.get
+
+          let response = createResponse(request.id, responseObj)
+          return McpResult(isError: false, response: response)
+        except Exception as e:
+          return McpResult(
+            isError: true,
+            error: createError(request.id, -32603, "Tool execution failed: " & e.msg)
+          )
       else:
         return McpResult(
           isError: true,

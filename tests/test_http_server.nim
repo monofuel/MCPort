@@ -1,6 +1,7 @@
 import
-  std/[unittest, json, tables, strutils],
-  mcport/[mcp_core, mcp_server_http]
+  std/[unittest, json, tables, strutils, options],
+  mcport/[mcp_core, mcp_server_http],
+  ./test_helpers
 
 suite "HTTP Server Tests":
   
@@ -29,16 +30,12 @@ suite "HTTP Server Tests":
   test "example http server tool functionality":
     let httpServer = createExampleHttpServer()
     let server = httpServer.server
-    
-    # Initialize the server
-    let initRequest = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"""
-    let initResult = server.handleRequest(initRequest)
-    check not initResult.isError
-    
+    initializeTestServer(server)
+
     # Test the secret_fetcher tool
-    let callRequest = """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"secret_fetcher","arguments":{"recipient":"HTTPUser"}}}"""
+    let callRequest = makeToolCallRequest(2, "secret_fetcher", %*{"recipient": "HTTPUser"})
     let callResult = server.handleRequest(callRequest)
-    
+
     check not callResult.isError
     let content = callResult.response.result["content"][0]["text"].getStr()
     check content.contains("Shibboleet says: Leet greetings from the universe! Hello, HTTPUser!")
@@ -54,11 +51,19 @@ suite "HTTP Server Tests":
     check invalidResult.error.error.code == -32600
     
     # Test proper JSON-RPC response format
-    let initRequest = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"""
+    let initRequest = makeInitRequest()
     let initResult = server.handleRequest(initRequest)
     check not initResult.isError
     check initResult.response.jsonrpc == "2.0"
     check initResult.response.id == 1
+
+  test "http server notification queue setup":
+    let httpServer = createExampleHttpServer()
+    let server = httpServer.server
+
+    # Verify the server has notification capabilities set up
+    check server.notificationCallback.isSome
+    check httpServer.notifications.len == 0
 
 # Note: Integration tests with real HTTP servers are complex to implement in unit tests
 # For now, we focus on unit testing the core functionality

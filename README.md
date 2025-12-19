@@ -121,9 +121,6 @@ let callReq = client.createToolCallRequest("greet", %*{"name": "World"})
 - Tools: list, call
 - Transports: STDIO, HTTP
 
-**Not implemented:**
-
-See [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/) for protocol details.
 
 ## Examples
 
