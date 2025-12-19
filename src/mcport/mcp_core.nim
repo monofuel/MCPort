@@ -29,6 +29,7 @@ type
   ErrorDetail* = object
     code*: int
     message*: string
+    data*: Option[JsonNode]
 
   InitParams* = object
     protocolVersion*: string
@@ -48,6 +49,7 @@ type
 
   ResourceCaps* = object
     listChanged*: bool
+    subscribe*: bool
 
   ServerInfo* = object
     name*: string
@@ -87,6 +89,8 @@ type
     promptHandlers*: Table[string, PromptHandler]
     resources*: Table[string, McpResource]
     resourceHandlers*: Table[string, ResourceHandler]
+    resourceTemplates*: Table[string, McpResourceTemplate]
+    resourceSubscriptions*: Table[string, bool]  # URI -> subscribed (true if subscribed)
     notificationCallback*: Option[NotificationCallback]
 
   PromptArgument* = object
@@ -157,8 +161,19 @@ type
   McpResource* = object
     uri*: string
     name*: Option[string]
+    title*: Option[string]
     description*: Option[string]
     mimeType*: Option[string]
+    size*: Option[int]
+    annotations*: Option[JsonNode]
+
+  McpResourceTemplate* = object
+    uriTemplate*: string
+    name*: Option[string]
+    title*: Option[string]
+    description*: Option[string]
+    mimeType*: Option[string]
+    annotations*: Option[JsonNode]
 
   ResourceContent* = object
     case isText*: bool
@@ -172,6 +187,9 @@ type
   NotificationCallback* = proc(notification: JsonNode) {.gcsafe.}
 
   ReadResourceParams* = object
+    uri*: string
+
+  SubscribeResourceParams* = object
     uri*: string
 
   McpResult* = object
@@ -189,7 +207,7 @@ proc newMcpServer*(name: string, version: string): McpServer =
     capabilities: ServerCapabilities(
       tools: ToolCaps(listChanged: true),
       prompts: PromptCaps(listChanged: true),
-      resources: ResourceCaps(listChanged: true)
+      resources: ResourceCaps(listChanged: true, subscribe: true)
     ),
     tools: initTable[string, McpTool](),
     toolHandlers: initTable[string, ToolHandler](),
@@ -198,6 +216,8 @@ proc newMcpServer*(name: string, version: string): McpServer =
     promptHandlers: initTable[string, PromptHandler](),
     resources: initTable[string, McpResource](),
     resourceHandlers: initTable[string, ResourceHandler](),
+    resourceTemplates: initTable[string, McpResourceTemplate](),
+    resourceSubscriptions: initTable[string, bool](),
     notificationCallback: none(NotificationCallback)
   )
 
@@ -235,6 +255,25 @@ proc notifyToolsListChanged*(server: McpServer) =
       "method": "notifications/tools/list_changed"
     })
 
+proc notifyResourceUpdated*(server: McpServer, uri: string) =
+  ## Send a resource updated notification for subscribed resources.
+  if server.resourceSubscriptions.contains(uri) and server.notificationCallback.isSome:
+    server.notificationCallback.get()(%*{
+      "jsonrpc": "2.0",
+      "method": "notifications/resources/updated",
+      "params": {
+        "uri": uri
+      }
+    })
+
+proc notifyResourcesListChanged*(server: McpServer) =
+  ## Send a resources list changed notification.
+  if server.notificationCallback.isSome:
+    server.notificationCallback.get()(%*{
+      "jsonrpc": "2.0",
+      "method": "notifications/resources/list_changed"
+    })
+
 proc registerPrompt*(server: McpServer, prompt: McpPrompt, handler: PromptHandler) =
   ## Register a prompt with the MCP server.
   server.prompts[prompt.name] = prompt
@@ -244,13 +283,23 @@ proc registerResource*(server: McpServer, resource: McpResource, handler: Resour
   ## Register a resource with the MCP server.
   server.resources[resource.uri] = resource
   server.resourceHandlers[resource.uri] = handler
+  # Notify that resources list has changed
+  if server.notificationCallback.isSome:
+    server.notificationCallback.get()(%*{
+      "jsonrpc": "2.0",
+      "method": "notifications/resources/list_changed"
+    })
 
-proc createError*(id: int, code: int, message: string): RpcError =
+proc registerResourceTemplate*(server: McpServer, resourceTemplate: McpResourceTemplate) =
+  ## Register a resource template with the MCP server.
+  server.resourceTemplates[resourceTemplate.uriTemplate] = resourceTemplate
+
+proc createError*(id: int, code: int, message: string, data: Option[JsonNode] = none(JsonNode)): RpcError =
   ## Create an RPC error response.
   RpcError(
     jsonrpc: "2.0",
     id: id,
-    error: ErrorDetail(code: code, message: message)
+    error: ErrorDetail(code: code, message: message, data: data)
   )
 
 proc createResponse*(id: int, data: JsonNode): RpcResponse =
@@ -386,7 +435,8 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
             "listChanged": true
           },
           "resources": {
-            "listChanged": true
+            "listChanged": true,
+            "subscribe": true
           }
         },
         "serverInfo": {
@@ -571,15 +621,23 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       var resourcesArray = newJArray()
 
       for resource in server.resources.values:
-        resourcesArray.add(%*{
+        var resourceObj = %*{
           "uri": resource.uri,
           "name": resource.name.get(""),
           "description": resource.description.get(""),
           "mimeType": resource.mimeType.get("")
-        })
+        }
+        if resource.title.isSome:
+          resourceObj["title"] = %resource.title.get
+        if resource.size.isSome:
+          resourceObj["size"] = %resource.size.get
+        if resource.annotations.isSome:
+          resourceObj["annotations"] = resource.annotations.get
+        resourcesArray.add(resourceObj)
 
       let response = createResponse(request.id, %*{
-        "resources": resourcesArray
+        "resources": resourcesArray,
+        "nextCursor": nil
       })
       return McpResult(isError: false, response: response)
 
@@ -594,11 +652,15 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       if params.uri in server.resourceHandlers:
         try:
           let content = server.resourceHandlers[params.uri](params.uri)
-          var contentObj = %*{}
+          let resource = server.resources[params.uri]
+          var contentObj = %*{
+            "uri": params.uri,
+            "mimeType": resource.mimeType.get("")
+          }
           if content.isText:
             contentObj["text"] = %content.text
           else:
-            contentObj["blob"] = %content.blob  # TODO: implement blob support
+            contentObj["blob"] = %content.blob  # base64-encoded binary data
 
           let response = createResponse(request.id, %*{
             "contents": [contentObj]
@@ -612,7 +674,56 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       else:
         return McpResult(
           isError: true,
-          error: createError(request.id, -32602, "Unknown resource URI")
+          error: createError(request.id, -32002, "Resource not found", some(%*{"uri": params.uri}))
+        )
+
+    of "resources/templates/list":
+      if not server.initialized:
+        return McpResult(
+          isError: true,
+          error: createError(request.id, -32001, "Server not initialized")
+        )
+
+      var templatesArray = newJArray()
+
+      for resourceTemplate in server.resourceTemplates.values:
+        var templateObj = %*{
+          "uriTemplate": resourceTemplate.uriTemplate
+        }
+        if resourceTemplate.name.isSome:
+          templateObj["name"] = %resourceTemplate.name.get
+        if resourceTemplate.title.isSome:
+          templateObj["title"] = %resourceTemplate.title.get
+        if resourceTemplate.description.isSome:
+          templateObj["description"] = %resourceTemplate.description.get
+        if resourceTemplate.mimeType.isSome:
+          templateObj["mimeType"] = %resourceTemplate.mimeType.get
+        if resourceTemplate.annotations.isSome:
+          templateObj["annotations"] = resourceTemplate.annotations.get
+        templatesArray.add(templateObj)
+
+      let response = createResponse(request.id, %*{
+        "resourceTemplates": templatesArray
+      })
+      return McpResult(isError: false, response: response)
+
+    of "resources/subscribe":
+      if not server.initialized:
+        return McpResult(
+          isError: true,
+          error: createError(request.id, -32001, "Server not initialized")
+        )
+
+      let params = request.params.toJson().fromJson(SubscribeResourceParams)
+      if params.uri in server.resources:
+        # Mark the resource as subscribed
+        server.resourceSubscriptions[params.uri] = true
+        let response = createResponse(request.id, %*{})  # Empty response for subscription confirmation
+        return McpResult(isError: false, response: response)
+      else:
+        return McpResult(
+          isError: true,
+          error: createError(request.id, -32002, "Resource not found", some(%*{"uri": params.uri}))
         )
 
     of "get_resource":

@@ -269,5 +269,5 @@ suite "MCP Core Tests":
     let result = server.handleRequest(readRequest)
 
     check result.isError
-    check result.error.error.code == -32602
-    check result.error.error.message.contains("Unknown resource URI") 
+    check result.error.error.code == -32002
+    check result.error.error.message.contains("Resource not found") 
