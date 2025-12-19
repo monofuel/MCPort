@@ -2,7 +2,7 @@
 ## This shows how to create MCP servers with custom tools
 
 import
-  std/[json, os],
+  std/[json, os, options],
   mcport
 
 proc createCustomServer(): McpServer =
@@ -91,7 +91,27 @@ proc createCustomServer(): McpServer =
     return %*calcResult
   
   server.registerTool(mathTool, mathHandler)
-  
+
+  # Prompt: Code review assistant
+  let codeReviewPrompt = McpPrompt(
+    name: "code_review",
+    description: some("Asks the LLM to analyze code quality and suggest improvements"),
+    arguments: @[
+      PromptArgument(name: "code", description: some("The code to review"), required: true)
+    ]
+  )
+
+  proc codeReviewHandler(arguments: JsonNode): seq[PromptMessage] =
+    let code = arguments["code"].getStr()
+    return @[
+      PromptMessage(
+        role: "user",
+        content: TextContent(`type`: "text", text: "Please review this code and provide feedback on quality, potential improvements, and best practices:\n\n" & code)
+      )
+    ]
+
+  server.registerPrompt(codeReviewPrompt, codeReviewHandler)
+
   return server
 
 proc main() =

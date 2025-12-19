@@ -37,8 +37,12 @@ type
     
   ServerCapabilities* = object
     tools*: ToolCaps
-    
+    prompts*: PromptCaps
+
   ToolCaps* = object
+    listChanged*: bool
+
+  PromptCaps* = object
     listChanged*: bool
     
   ServerInfo* = object
@@ -47,6 +51,10 @@ type
 
   ListParams* = object
     cursor*: Option[string]  # Optional cursor for pagination
+
+  GetPromptParams* = object
+    name*: string
+    arguments*: Option[JsonNode]
 
   CallToolParams* = object
     name*: string
@@ -65,6 +73,28 @@ type
     capabilities*: ServerCapabilities
     tools*: Table[string, McpTool]
     toolHandlers*: Table[string, ToolHandler]
+    prompts*: Table[string, McpPrompt]
+    promptHandlers*: Table[string, PromptHandler]
+
+  PromptArgument* = object
+    name*: string
+    description*: Option[string]
+    required*: bool
+
+  McpPrompt* = object
+    name*: string
+    description*: Option[string]
+    arguments*: seq[PromptArgument]
+
+  PromptMessage* = object
+    role*: string  # "user" or "assistant"
+    content*: TextContent  # TODO: Add support for other content types
+
+  TextContent* = object
+    `type`*: string  # "text"
+    text*: string
+
+  PromptHandler* = proc(arguments: JsonNode): seq[PromptMessage] {.gcsafe.}
 
   McpResult* = object
     case isError*: bool
@@ -79,16 +109,24 @@ proc newMcpServer*(name: string, version: string): McpServer =
     initialized: false,
     serverInfo: ServerInfo(name: name, version: version),
     capabilities: ServerCapabilities(
-      tools: ToolCaps(listChanged: true)
+      tools: ToolCaps(listChanged: true),
+      prompts: PromptCaps(listChanged: true)
     ),
     tools: initTable[string, McpTool](),
-    toolHandlers: initTable[string, ToolHandler]()
+    toolHandlers: initTable[string, ToolHandler](),
+    prompts: initTable[string, McpPrompt](),
+    promptHandlers: initTable[string, PromptHandler]()
   )
 
 proc registerTool*(server: McpServer, tool: McpTool, handler: ToolHandler) =
   ## Register a tool with the MCP server.
   server.tools[tool.name] = tool
   server.toolHandlers[tool.name] = handler
+
+proc registerPrompt*(server: McpServer, prompt: McpPrompt, handler: PromptHandler) =
+  ## Register a prompt with the MCP server.
+  server.prompts[prompt.name] = prompt
+  server.promptHandlers[prompt.name] = handler
 
 proc createError*(id: int, code: int, message: string): RpcError =
   ## Create an RPC error response.
@@ -160,6 +198,9 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         "capabilities": {
           "tools": {
             "listChanged": true
+          },
+          "prompts": {
+            "listChanged": true
           }
         },
         "serverInfo": {
@@ -224,7 +265,84 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
           error: createError(request.id, -32602, "Unknown tool name")
         )
     
-    of "resources/list", "prompts/list", "resources/read", "get_resource":
+    of "prompts/list":
+      if not server.initialized:
+        return McpResult(
+          isError: true,
+          error: createError(request.id, -32001, "Server not initialized")
+        )
+
+      discard request.params.toJson().fromJson(ListParams)  # Validate params
+      # TODO: Add pagination support with cursor
+      var promptsArray = newJArray()
+
+      for prompt in server.prompts.values:
+        var argsArray = newJArray()
+        for arg in prompt.arguments:
+          argsArray.add(%*{
+            "name": arg.name,
+            "description": arg.description.get(""),
+            "required": arg.required
+          })
+
+        promptsArray.add(%*{
+          "name": prompt.name,
+          "description": prompt.description.get(""),
+          "arguments": argsArray
+        })
+
+      let response = createResponse(request.id, %*{
+        "prompts": promptsArray
+      })
+      return McpResult(isError: false, response: response)
+
+    of "prompts/get":
+      if not server.initialized:
+        return McpResult(
+          isError: true,
+          error: createError(request.id, -32001, "Server not initialized")
+        )
+
+      let params = request.params.toJson().fromJson(GetPromptParams)
+      if params.name in server.promptHandlers:
+        # Validate required arguments
+        let prompt = server.prompts[params.name]
+        for arg in prompt.arguments:
+          if arg.required and (params.arguments.isNone or not params.arguments.get().hasKey(arg.name)):
+            return McpResult(
+              isError: true,
+              error: createError(request.id, -32602, "Missing required argument: " & arg.name)
+            )
+
+        try:
+          let messages = server.promptHandlers[params.name](params.arguments.get(%*{}))
+          var messagesArray = newJArray()
+          for msg in messages:
+            messagesArray.add(%*{
+              "role": msg.role,
+              "content": {
+                "type": "text",
+                "text": msg.content.text
+              }
+            })
+
+          let response = createResponse(request.id, %*{
+            "description": prompt.description.get(""),
+            "messages": messagesArray
+          })
+          return McpResult(isError: false, response: response)
+        except Exception as e:
+          return McpResult(
+            isError: true,
+            error: createError(request.id, -32603, "Prompt execution failed: " & e.msg)
+          )
+      else:
+        return McpResult(
+          isError: true,
+          error: createError(request.id, -32602, "Unknown prompt name")
+        )
+
+    of "resources/list", "resources/read", "get_resource":
       # TODO do these!
       return McpResult(
         isError: true,
