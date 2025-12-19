@@ -64,6 +64,23 @@ proc promptHandler(arguments: JsonNode): seq[PromptMessage] =
 server.registerPrompt(prompt, promptHandler)
 ```
 
+### Register a Resource
+
+```nim
+let resource = McpResource(
+  uri: "config://server-info",
+  name: some("Server Configuration"),
+  description: some("Server configuration data"),
+  mimeType: some("application/json")
+)
+
+proc resourceHandler(uri: string): ResourceContent =
+  let config = %*{"status": "running", "version": "1.0.0"}
+  return ResourceContent(isText: true, text: $config)
+
+server.registerResource(resource, resourceHandler)
+```
+
 ### HTTP Transport
 
 ```nim
@@ -96,6 +113,7 @@ let callReq = client.createToolCallRequest("greet", %*{"name": "World"})
 **Server:**
 - Tools: register, list, call (JSON schema + handlers)
 - Prompts: register, list, get (text content only)
+- Resources: register, list, read (text content only)
 - Transports: STDIO, HTTP
 
 **Client:**
@@ -103,9 +121,9 @@ let callReq = client.createToolCallRequest("greet", %*{"name": "World"})
 - Transports: STDIO, HTTP
 
 **Not implemented:**
-- Resources
-- Prompt pagination, notifications, image/audio content
-- Tool/prompt list_changed notifications
+- Resources: blob/binary content, pagination, notifications
+- Prompts: pagination, notifications, image/audio content
+- Tool/prompt/resource list_changed notifications
 - Progress tracking
 
 See [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/) for protocol details.
