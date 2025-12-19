@@ -22,7 +22,7 @@ suite "MCP Client Core Tests":
     check initRequest.jsonrpc == "2.0"
     check initRequest.`method` == "initialize"
     check initRequest.id > 0
-    check initRequest.params["protocolVersion"].getStr() == "2024-11-05"
+    check initRequest.params["protocolVersion"].getStr() == "2025-06-18"
     check initRequest.params["clientInfo"]["name"].getStr() == "TestClient"
     
     # Test tools/list request

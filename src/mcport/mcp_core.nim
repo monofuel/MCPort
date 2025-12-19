@@ -3,7 +3,7 @@ import
   jsony
 
 const
-  MCP_VERSION* = "2024-11-05"  ## MCP protocol version
+  MCP_VERSION* = "2025-06-18"  ## MCP protocol version
 
 type
   RpcRequest* = object
@@ -66,10 +66,15 @@ type
 
   McpTool* = object
     name*: string
+    title*: Option[string]
     description*: string
     inputSchema*: JsonNode
+    outputSchema*: Option[JsonNode]
+    annotations*: Option[JsonNode]
 
   ToolHandler* = proc(arguments: JsonNode): JsonNode {.gcsafe.}
+
+  RichToolHandler* = proc(arguments: JsonNode): ToolResult {.gcsafe.}
 
   McpServer* = ref object
     initialized*: bool
@@ -77,10 +82,12 @@ type
     capabilities*: ServerCapabilities
     tools*: Table[string, McpTool]
     toolHandlers*: Table[string, ToolHandler]
+    richToolHandlers*: Table[string, RichToolHandler]
     prompts*: Table[string, McpPrompt]
     promptHandlers*: Table[string, PromptHandler]
     resources*: Table[string, McpResource]
     resourceHandlers*: Table[string, ResourceHandler]
+    notificationCallback*: Option[NotificationCallback]
 
   PromptArgument* = object
     name*: string
@@ -100,6 +107,51 @@ type
     `type`*: string  # "text"
     text*: string
 
+  ImageContent* = object
+    `type`*: string  # "image"
+    data*: string  # base64-encoded data
+    mimeType*: string
+    annotations*: Option[JsonNode]
+
+  AudioContent* = object
+    `type`*: string  # "audio"
+    data*: string  # base64-encoded data
+    mimeType*: string
+
+  ResourceLinkContent* = object
+    `type`*: string  # "resource_link"
+    uri*: string
+    name*: Option[string]
+    description*: Option[string]
+    mimeType*: Option[string]
+    annotations*: Option[JsonNode]
+
+  EmbeddedResourceContent* = object
+    `type`*: string  # "resource"
+    resource*: JsonNode
+    annotations*: Option[JsonNode]
+
+  ToolContentType* = enum
+    tctText, tctImage, tctAudio, tctResourceLink, tctResource
+
+  ToolContent* = object
+    case kind*: ToolContentType
+    of tctText:
+      textContent*: TextContent
+    of tctImage:
+      imageContent*: ImageContent
+    of tctAudio:
+      audioContent*: AudioContent
+    of tctResourceLink:
+      resourceLinkContent*: ResourceLinkContent
+    of tctResource:
+      embeddedResourceContent*: EmbeddedResourceContent
+
+  ToolResult* = object
+    content*: seq[ToolContent]
+    structuredContent*: Option[JsonNode]
+    isError*: bool
+
   PromptHandler* = proc(arguments: JsonNode): seq[PromptMessage] {.gcsafe.}
 
   McpResource* = object
@@ -116,6 +168,8 @@ type
       blob*: string  # base64-encoded binary data (TODO: implement)
 
   ResourceHandler* = proc(uri: string): ResourceContent {.gcsafe.}
+
+  NotificationCallback* = proc(notification: JsonNode) {.gcsafe.}
 
   ReadResourceParams* = object
     uri*: string
@@ -139,16 +193,47 @@ proc newMcpServer*(name: string, version: string): McpServer =
     ),
     tools: initTable[string, McpTool](),
     toolHandlers: initTable[string, ToolHandler](),
+    richToolHandlers: initTable[string, RichToolHandler](),
     prompts: initTable[string, McpPrompt](),
     promptHandlers: initTable[string, PromptHandler](),
     resources: initTable[string, McpResource](),
-    resourceHandlers: initTable[string, ResourceHandler]()
+    resourceHandlers: initTable[string, ResourceHandler](),
+    notificationCallback: none(NotificationCallback)
   )
 
 proc registerTool*(server: McpServer, tool: McpTool, handler: ToolHandler) =
   ## Register a tool with the MCP server.
   server.tools[tool.name] = tool
   server.toolHandlers[tool.name] = handler
+  # Notify that tools list has changed
+  if server.notificationCallback.isSome:
+    server.notificationCallback.get()(%*{
+      "jsonrpc": "2.0",
+      "method": "notifications/tools/list_changed"
+    })
+
+proc registerRichTool*(server: McpServer, tool: McpTool, handler: RichToolHandler) =
+  ## Register a rich tool with the MCP server.
+  server.tools[tool.name] = tool
+  server.richToolHandlers[tool.name] = handler
+  # Notify that tools list has changed
+  if server.notificationCallback.isSome:
+    server.notificationCallback.get()(%*{
+      "jsonrpc": "2.0",
+      "method": "notifications/tools/list_changed"
+    })
+
+proc setNotificationCallback*(server: McpServer, callback: NotificationCallback) =
+  ## Set the notification callback for sending notifications to clients.
+  server.notificationCallback = some(callback)
+
+proc notifyToolsListChanged*(server: McpServer) =
+  ## Send a tools list changed notification.
+  if server.notificationCallback.isSome:
+    server.notificationCallback.get()(%*{
+      "jsonrpc": "2.0",
+      "method": "notifications/tools/list_changed"
+    })
 
 proc registerPrompt*(server: McpServer, prompt: McpPrompt, handler: PromptHandler) =
   ## Register a prompt with the MCP server.
@@ -175,6 +260,72 @@ proc createResponse*(id: int, data: JsonNode): RpcResponse =
     id: id,
     result: data
   )
+
+proc textContent*(text: string): ToolContent =
+  ## Create text content for tool results.
+  ToolContent(kind: tctText, textContent: TextContent(`type`: "text", text: text))
+
+proc imageContent*(data: string, mimeType: string, annotations: Option[JsonNode] = none(JsonNode)): ToolContent =
+  ## Create image content for tool results.
+  ToolContent(kind: tctImage, imageContent: ImageContent(`type`: "image", data: data, mimeType: mimeType, annotations: annotations))
+
+proc audioContent*(data: string, mimeType: string): ToolContent =
+  ## Create audio content for tool results.
+  ToolContent(kind: tctAudio, audioContent: AudioContent(`type`: "audio", data: data, mimeType: mimeType))
+
+proc resourceLinkContent*(uri: string, name: Option[string] = none(string), description: Option[string] = none(string), mimeType: Option[string] = none(string), annotations: Option[JsonNode] = none(JsonNode)): ToolContent =
+  ## Create resource link content for tool results.
+  ToolContent(kind: tctResourceLink, resourceLinkContent: ResourceLinkContent(`type`: "resource_link", uri: uri, name: name, description: description, mimeType: mimeType, annotations: annotations))
+
+proc embeddedResourceContent*(resource: JsonNode, annotations: Option[JsonNode] = none(JsonNode)): ToolContent =
+  ## Create embedded resource content for tool results.
+  ToolContent(kind: tctResource, embeddedResourceContent: EmbeddedResourceContent(`type`: "resource", resource: resource, annotations: annotations))
+
+proc toolContentToJson*(content: ToolContent): JsonNode =
+  ## Convert ToolContent to JsonNode for serialization.
+  case content.kind:
+  of tctText:
+    return %*{
+      "type": "text",
+      "text": content.textContent.text
+    }
+  of tctImage:
+    var obj = %*{
+      "type": "image",
+      "data": content.imageContent.data,
+      "mimeType": content.imageContent.mimeType
+    }
+    if content.imageContent.annotations.isSome:
+      obj["annotations"] = content.imageContent.annotations.get
+    return obj
+  of tctAudio:
+    return %*{
+      "type": "audio",
+      "data": content.audioContent.data,
+      "mimeType": content.audioContent.mimeType
+    }
+  of tctResourceLink:
+    var obj = %*{
+      "type": "resource_link",
+      "uri": content.resourceLinkContent.uri
+    }
+    if content.resourceLinkContent.name.isSome:
+      obj["name"] = %content.resourceLinkContent.name.get
+    if content.resourceLinkContent.description.isSome:
+      obj["description"] = %content.resourceLinkContent.description.get
+    if content.resourceLinkContent.mimeType.isSome:
+      obj["mimeType"] = %content.resourceLinkContent.mimeType.get
+    if content.resourceLinkContent.annotations.isSome:
+      obj["annotations"] = content.resourceLinkContent.annotations.get
+    return obj
+  of tctResource:
+    var obj = %*{
+      "type": "resource",
+      "resource": content.embeddedResourceContent.resource
+    }
+    if content.embeddedResourceContent.annotations.isSome:
+      obj["annotations"] = content.embeddedResourceContent.annotations.get
+    return obj
 
 proc handleRequest*(server: McpServer, line: string): McpResult =
   ## Handle an incoming MCP request and return the result.
@@ -257,14 +408,22 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       var toolsArray = newJArray()
       
       for tool in server.tools.values:
-        toolsArray.add(%*{
+        var toolObj = %*{
           "name": tool.name,
           "description": tool.description,
           "inputSchema": tool.inputSchema
-        })
+        }
+        if tool.title.isSome:
+          toolObj["title"] = %tool.title.get
+        if tool.outputSchema.isSome:
+          toolObj["outputSchema"] = tool.outputSchema.get
+        if tool.annotations.isSome:
+          toolObj["annotations"] = tool.annotations.get
+        toolsArray.add(toolObj)
       
       let response = createResponse(request.id, %*{
-        "tools": toolsArray
+        "tools": toolsArray,
+        "nextCursor": nil
       })
       return McpResult(isError: false, response: response)
     
@@ -276,7 +435,30 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         )
         
       let params = request.params.toJson().fromJson(CallToolParams)
-      if params.name in server.toolHandlers:
+      if params.name in server.richToolHandlers:
+        # Use rich tool handler
+        try:
+          let toolResult = server.richToolHandlers[params.name](params.arguments)
+          var contentArray = newJArray()
+          for content in toolResult.content:
+            contentArray.add(toolContentToJson(content))
+
+          var responseObj = %*{
+            "content": contentArray,
+            "isError": toolResult.isError
+          }
+          if toolResult.structuredContent.isSome:
+            responseObj["structuredContent"] = toolResult.structuredContent.get
+
+          let response = createResponse(request.id, responseObj)
+          return McpResult(isError: false, response: response)
+        except Exception as e:
+          return McpResult(
+            isError: true,
+            error: createError(request.id, -32603, "Tool execution failed: " & e.msg)
+          )
+      elif params.name in server.toolHandlers:
+        # Use legacy tool handler for backward compatibility
         try:
           let toolResult = server.toolHandlers[params.name](params.arguments)
           let response = createResponse(request.id, %*{

@@ -111,7 +111,7 @@ let callReq = client.createToolCallRequest("greet", %*{"name": "World"})
 ## What's Implemented
 
 **Server:**
-- Tools: register, list, call (JSON schema + handlers)
+- Tools: register, list (with pagination), call (JSON schema + handlers + rich content)
 - Prompts: register, list, get (text content only)
 - Resources: register, list, read (text content only)
 - Transports: STDIO, HTTP
@@ -123,7 +123,7 @@ let callReq = client.createToolCallRequest("greet", %*{"name": "World"})
 **Not implemented:**
 - Resources: blob/binary content, pagination, notifications
 - Prompts: pagination, notifications, image/audio content
-- Tool/prompt/resource list_changed notifications
+- Prompt/resource list_changed notifications
 - Progress tracking
 
 See [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/) for protocol details.
