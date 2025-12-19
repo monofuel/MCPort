@@ -92,6 +92,54 @@ proc createCustomServer(): McpServer =
   
   server.registerTool(mathTool, mathHandler)
 
+  # Progress-enabled tool: Long running task
+  let progressTool = McpTool(
+    name: "long_task",
+    description: "Simulates a long-running task with progress reporting",
+    inputSchema: %*{
+      "type": "object",
+      "properties": {
+        "duration": {
+          "type": "integer",
+          "description": "Duration in seconds (1-10)",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 3
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  )
+
+  proc longTaskHandler(arguments: JsonNode, progressReporter: ProgressReporter): ToolResult =
+    let duration = arguments.getOrDefault("duration").getInt(3)
+    let steps = 10
+    let progressToken = "long-task-demo"  # Demo progress token
+
+    for i in 0..<steps:
+      # Simulate work
+      sleep(duration * 1000 div steps)
+
+      # Report progress
+      let progress = (i + 1).float / steps.float
+      progressReporter(
+        progressToken = progressToken,
+        progress = some(progress),
+        status = some("Step " & $(i+1) & " of " & $steps & " completed")
+      )
+
+    return ToolResult(
+      content: @[textContent("Long task completed after " & $duration & " seconds!")],
+      isError: false
+    )
+
+  # Enable progress capability and notifications
+  server.enableProgressCapability()
+  server.enableProgressNotifications()
+
+  server.registerProgressTool(progressTool, longTaskHandler)
+
   # Prompt: Code review assistant
   let codeReviewPrompt = McpPrompt(
     name: "code_review",

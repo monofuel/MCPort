@@ -40,6 +40,7 @@ type
     tools*: ToolCaps
     prompts*: PromptCaps
     resources*: ResourceCaps
+    progress*: bool
 
   ToolCaps* = object
     listChanged*: bool
@@ -78,6 +79,8 @@ type
 
   RichToolHandler* = proc(arguments: JsonNode): ToolResult {.gcsafe.}
 
+  ProgressToolHandler* = proc(arguments: JsonNode, progressReporter: ProgressReporter): ToolResult {.gcsafe.}
+
   McpServer* = ref object
     initialized*: bool
     serverInfo*: ServerInfo
@@ -85,13 +88,16 @@ type
     tools*: Table[string, McpTool]
     toolHandlers*: Table[string, ToolHandler]
     richToolHandlers*: Table[string, RichToolHandler]
+    progressToolHandlers*: Table[string, ProgressToolHandler]
     prompts*: Table[string, McpPrompt]
     promptHandlers*: Table[string, PromptHandler]
     resources*: Table[string, McpResource]
     resourceHandlers*: Table[string, ResourceHandler]
+    progressResourceHandlers*: Table[string, ProgressResourceHandler]
     resourceTemplates*: Table[string, McpResourceTemplate]
     resourceSubscriptions*: Table[string, bool]  # URI -> subscribed (true if subscribed)
     notificationCallback*: Option[NotificationCallback]
+    progressReporter*: Option[ProgressReporter]
 
   PromptArgument* = object
     name*: string
@@ -199,13 +205,32 @@ type
 
   ResourceHandler* = proc(uri: string): ResourceContent {.gcsafe.}
 
+  ProgressResourceHandler* = proc(uri: string, progressReporter: ProgressReporter): ResourceContent {.gcsafe.}
+
   NotificationCallback* = proc(notification: JsonNode) {.gcsafe.}
+
+  ProgressReporter* = proc(
+    progressToken: ProgressToken,
+    progress: Option[float] = none(float),
+    status: Option[string] = none(string),
+    total: Option[int] = none(int),
+    current: Option[int] = none(int)
+  ) {.gcsafe.}
 
   ReadResourceParams* = object
     uri*: string
 
   SubscribeResourceParams* = object
     uri*: string
+
+  ProgressToken* = string  # Can be string or int, using string for simplicity
+
+  ProgressParams* = object
+    progressToken*: ProgressToken
+    progress*: Option[float]  # 0.0 to 1.0, percentage complete
+    total*: Option[int]       # Total items/steps
+    current*: Option[int]     # Current item/step
+    status*: Option[string]   # Status message
 
   McpResult* = object
     case isError*: bool
@@ -222,18 +247,22 @@ proc newMcpServer*(name: string, version: string): McpServer =
     capabilities: ServerCapabilities(
       tools: ToolCaps(listChanged: true),
       prompts: PromptCaps(listChanged: true),
-      resources: ResourceCaps(listChanged: true, subscribe: true)
+      resources: ResourceCaps(listChanged: true, subscribe: true),
+      progress: false  # Opt-in capability, defaults to false
     ),
     tools: initTable[string, McpTool](),
     toolHandlers: initTable[string, ToolHandler](),
     richToolHandlers: initTable[string, RichToolHandler](),
+    progressToolHandlers: initTable[string, ProgressToolHandler](),
     prompts: initTable[string, McpPrompt](),
     promptHandlers: initTable[string, PromptHandler](),
     resources: initTable[string, McpResource](),
     resourceHandlers: initTable[string, ResourceHandler](),
+    progressResourceHandlers: initTable[string, ProgressResourceHandler](),
     resourceTemplates: initTable[string, McpResourceTemplate](),
     resourceSubscriptions: initTable[string, bool](),
-    notificationCallback: none(NotificationCallback)
+    notificationCallback: none(NotificationCallback),
+    progressReporter: none(ProgressReporter)
   )
 
 proc registerTool*(server: McpServer, tool: McpTool, handler: ToolHandler) =
@@ -258,9 +287,40 @@ proc registerRichTool*(server: McpServer, tool: McpTool, handler: RichToolHandle
       "method": "notifications/tools/list_changed"
     })
 
+proc registerProgressTool*(server: McpServer, tool: McpTool, handler: ProgressToolHandler) =
+  ## Register a progress-enabled tool with the MCP server.
+  server.tools[tool.name] = tool
+  server.progressToolHandlers[tool.name] = handler
+  # Notify that tools list has changed
+  if server.notificationCallback.isSome:
+    server.notificationCallback.get()(%*{
+      "jsonrpc": "2.0",
+      "method": "notifications/tools/list_changed"
+    })
+
 proc setNotificationCallback*(server: McpServer, callback: NotificationCallback) =
   ## Set the notification callback for sending notifications to clients.
   server.notificationCallback = some(callback)
+
+proc enableProgressCapability*(server: McpServer) =
+  ## Enable progress tracking capability for the server.
+  server.capabilities.progress = true
+
+proc setProgressReporter*(server: McpServer, reporter: ProgressReporter) =
+  ## Set the progress reporter callback for the server.
+  server.progressReporter = some(reporter)
+
+proc reportProgress*(
+  server: McpServer,
+  progressToken: ProgressToken,
+  progress: Option[float] = none(float),
+  status: Option[string] = none(string),
+  total: Option[int] = none(int),
+  current: Option[int] = none(int)
+) =
+  ## Report progress for a long-running operation.
+  if server.progressReporter.isSome:
+    server.progressReporter.get()(progressToken, progress, status, total, current)
 
 proc notifyToolsListChanged*(server: McpServer) =
   ## Send a tools list changed notification.
@@ -289,6 +349,54 @@ proc notifyResourceUpdated*(server: McpServer, uri: string) =
       }
     })
 
+proc notifyProgress*(
+  server: McpServer,
+  progressToken: ProgressToken,
+  progress: Option[float] = none(float),
+  status: Option[string] = none(string),
+  total: Option[int] = none(int),
+  current: Option[int] = none(int)
+) =
+  ## Send a progress notification.
+  if server.notificationCallback.isSome:
+    # Validate progress value if provided
+    if progress.isSome and (progress.get < 0.0 or progress.get > 1.0):
+      # Invalid progress value, skip notification
+      return
+
+    var params = %*{
+      "progressToken": progressToken
+    }
+
+    if progress.isSome:
+      params["progress"] = %progress.get
+    if status.isSome:
+      params["status"] = %status.get
+    if total.isSome:
+      params["total"] = %total.get
+    if current.isSome:
+      params["current"] = %current.get
+
+    server.notificationCallback.get()(%*{
+      "jsonrpc": "2.0",
+      "method": "notifications/progress",
+      "params": params
+    })
+
+proc enableProgressNotifications*(server: McpServer) =
+  ## Enable progress notifications by setting up a default progress reporter.
+  ## This reporter will send progress notifications via the notification callback.
+  if server.notificationCallback.isSome:
+    let reporter = proc(
+      progressToken: ProgressToken,
+      progress: Option[float],
+      status: Option[string],
+      total: Option[int],
+      current: Option[int]
+    ) =
+      notifyProgress(server, progressToken, progress, status, total, current)
+    server.progressReporter = some(reporter)
+
 proc notifyResourcesListChanged*(server: McpServer) =
   ## Send a resources list changed notification.
   if server.notificationCallback.isSome:
@@ -312,6 +420,11 @@ proc registerResource*(server: McpServer, resource: McpResource, handler: Resour
   ## Register a resource with the MCP server.
   server.resources[resource.uri] = resource
   server.resourceHandlers[resource.uri] = handler
+
+proc registerProgressResource*(server: McpServer, resource: McpResource, handler: ProgressResourceHandler) =
+  ## Register a progress-enabled resource with the MCP server.
+  server.resources[resource.uri] = resource
+  server.progressResourceHandlers[resource.uri] = handler
   # Notify that resources list has changed
   if server.notificationCallback.isSome:
     server.notificationCallback.get()(%*{
@@ -514,7 +627,8 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
           "resources": {
             "listChanged": true,
             "subscribe": true
-          }
+          },
+          "progress": server.capabilities.progress
         },
         "serverInfo": {
           "name": server.serverInfo.name,
@@ -562,10 +676,11 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         )
         
       let params = request.params.toJson().fromJson(CallToolParams)
-      if params.name in server.richToolHandlers:
-        # Use rich tool handler
+      let progressToken = $request.id  # Use request ID as progress token
+      if params.name in server.progressToolHandlers and server.progressReporter.isSome:
+        # Use progress-enabled tool handler
         try:
-          let toolResult = server.richToolHandlers[params.name](params.arguments)
+          let toolResult = server.progressToolHandlers[params.name](params.arguments, server.progressReporter.get())
           var contentArray = newJArray()
           for content in toolResult.content:
             contentArray.add(toolContentToJson(content))
@@ -585,7 +700,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
             error: createError(request.id, -32603, "Tool execution failed: " & e.msg)
           )
       elif params.name in server.toolHandlers:
-        # Use legacy tool handler for backward compatibility
+        # Use regular tool handler
         try:
           let toolResult = server.toolHandlers[params.name](params.arguments)
           let response = createResponse(request.id, %*{
@@ -727,7 +842,32 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         )
 
       let params = request.params.toJson().fromJson(ReadResourceParams)
-      if params.uri in server.resourceHandlers:
+      let progressToken = $request.id  # Use request ID as progress token
+      if params.uri in server.progressResourceHandlers and server.progressReporter.isSome:
+        # Use progress-enabled resource handler
+        try:
+          let content = server.progressResourceHandlers[params.uri](params.uri, server.progressReporter.get())
+          let resource = server.resources[params.uri]
+          var contentObj = %*{
+            "uri": params.uri,
+            "mimeType": resource.mimeType.get("")
+          }
+          if content.isText:
+            contentObj["text"] = %content.text
+          else:
+            contentObj["blob"] = %content.blob  # base64-encoded binary data
+
+          let response = createResponse(request.id, %*{
+            "contents": [contentObj]
+          })
+          return McpResult(isError: false, response: response)
+        except Exception as e:
+          return McpResult(
+            isError: true,
+            error: createError(request.id, -32603, "Resource read failed: " & e.msg)
+          )
+      elif params.uri in server.resourceHandlers:
+        # Use regular resource handler
         try:
           let content = server.resourceHandlers[params.uri](params.uri)
           let resource = server.resources[params.uri]
