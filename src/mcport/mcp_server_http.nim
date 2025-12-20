@@ -46,21 +46,20 @@ proc handleJsonRpcRequest(httpServer: HttpMcpServer, request: Request) =
       httpServer.log("Rejected /mcp request with invalid content-type: " & contentType)
       request.respond(400, body = "Content-Type must start with application/json")
       return
-    
-    # Optional authorization check using provided callback
-    if httpServer.authCb != nil:
-      var isAuthorized = false
-      try:
-        isAuthorized = httpServer.authCb(request)
-      except Exception as e:
-        httpServer.log("Auth callback error: " & e.msg)
-        isAuthorized = false
-      if not isAuthorized:
-        var headers: HttpHeaders
-        headers["content-type"] = "application/json"
-        request.respond(401, headers, "{\"error\":\"Unauthorized\"}")
-        return
-    
+
+    # Authorization check using provided callback
+    var isAuthorized = false
+    try:
+      isAuthorized = httpServer.authCb(request)
+    except Exception as e:
+      httpServer.log("Auth callback error: " & e.msg)
+      isAuthorized = false
+    if not isAuthorized:
+      var headers: HttpHeaders
+      headers["content-type"] = "application/json"
+      request.respond(401, headers, "{\"error\":\"Unauthorized\"}")
+      return
+
     # Handle the MCP JSON-RPC request using the core server
     httpServer.log("Received JSON-RPC request: " & request.body)
     let result = httpServer.server.handleRequest(request.body)
@@ -99,19 +98,18 @@ proc handleServerInfoRequest(httpServer: HttpMcpServer, request: Request) =
       request.respond(405, body = "Method not allowed - use GET or POST for server info")
       return
 
-    # Optional authorization check using provided callback
-    if httpServer.authCb != nil:
-      var isAuthorized = false
-      try:
-        isAuthorized = httpServer.authCb(request)
-      except Exception as e:
-        httpServer.log("Auth callback error: " & e.msg)
-        isAuthorized = false
-      if not isAuthorized:
-        var headers: HttpHeaders
-        headers["content-type"] = "application/json"
-        request.respond(401, headers, "{\"error\":\"Unauthorized\"}")
-        return
+    # Authorization check using provided callback
+    var isAuthorized = false
+    try:
+      isAuthorized = httpServer.authCb(request)
+    except Exception as e:
+      httpServer.log("Auth callback error: " & e.msg)
+      isAuthorized = false
+    if not isAuthorized:
+      var headers: HttpHeaders
+      headers["content-type"] = "application/json"
+      request.respond(401, headers, "{\"error\":\"Unauthorized\"}")
+      return
 
     # Create server metadata response
     let serverInfo = %*{
@@ -146,20 +144,18 @@ proc handleNotificationsRequest(httpServer: HttpMcpServer, request: Request) =
       request.respond(405, body = "Method not allowed - use GET for notifications")
       return
 
-    # Optional authorization check using provided callback
-    # TODO this is stupid, wtf is an 'optional test'? this is stupid
-    if httpServer.authCb != nil:
-      var isAuthorized = false
-      try:
-        isAuthorized = httpServer.authCb(request)
-      except Exception as e:
-        httpServer.log("Auth callback error: " & e.msg)
-        isAuthorized = false
-      if not isAuthorized:
-        var headers: HttpHeaders
-        headers["content-type"] = "application/json"
-        request.respond(401, headers, "{\"error\":\"Unauthorized\"}")
-        return
+    # Authorization check using provided callback
+    var isAuthorized = false
+    try:
+      isAuthorized = httpServer.authCb(request)
+    except Exception as e:
+      httpServer.log("Auth callback error: " & e.msg)
+      isAuthorized = false
+    if not isAuthorized:
+      var headers: HttpHeaders
+      headers["content-type"] = "application/json"
+      request.respond(401, headers, "{\"error\":\"Unauthorized\"}")
+      return
 
     # Return all pending notifications and clear the queue
     let notifications = httpServer.notifications
@@ -179,10 +175,15 @@ proc handleNotificationsRequest(httpServer: HttpMcpServer, request: Request) =
 
 proc newHttpMcpServer*(mcpServer: McpServer, logEnabled: bool = true, authCb: AuthCallback = nil): HttpMcpServer =
   ## Create a new HTTP MCP server wrapper.
+
+  # Default to always-authorized if no auth callback provided
+  let finalAuthCb = if authCb != nil: authCb else:
+    (proc(request: Request): bool {.gcsafe.} = true)
+
   let httpMcpServer = HttpMcpServer(
     server: mcpServer,
     logEnabled: logEnabled,
-    authCb: authCb,
+    authCb: finalAuthCb,
     notifications: @[]
   )
 
