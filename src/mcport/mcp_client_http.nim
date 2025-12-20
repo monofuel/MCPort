@@ -44,10 +44,10 @@ proc sendRequest(client: HttpMcpClient, request: ClientRequest): ClientResult =
   try:
     let jsonRequest = request.toJson()
     client.log(fmt"Sending: {jsonRequest}")
-    
-    let response = client.httpClient.postContent(client.baseUrl, body = jsonRequest)
+
+    let response = client.httpClient.postContent(client.baseUrl & "/mcp", body = jsonRequest)
     client.log(fmt"Received: {response}")
-    
+
     return parseResponse(response)
   except HttpRequestError as e:
     client.log(fmt"HTTP request failed: {e.msg}")

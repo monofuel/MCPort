@@ -1,5 +1,5 @@
 import
-  std/[json, options, strformat, osproc],
+  std/[json, options, strformat, osproc, random, times, httpclient, net, os],
   jsony,
   mcport/[mcp_core, mcp_server_http]
 
@@ -526,3 +526,73 @@ proc createMockHttpResponse*(statusCode: int, body: string, contentType: string 
   ## Create a mock HTTP response for testing (simplified).
   ## In real testing, you'd use a proper HTTP mocking library.
   body
+
+# HTTP server management for integration tests
+proc waitForServerReady*(port: int, maxWait: int = 5000): bool =
+  ## Wait for HTTP server to be ready by polling it.
+  ## Returns true if server responds within maxWait milliseconds.
+
+  let startTime = epochTime()
+  let client = newHttpClient()
+
+  while epochTime() - startTime < (maxWait.float / 1000.0):
+    try:
+      let response = client.getContent(&"http://localhost:{port}/server-info")
+      return true
+    except:
+      sleep(50)  # Wait 50ms before retrying
+
+  return false
+
+# HTTP server management for integration tests
+type
+  ServerThreadData* = object
+    server*: HttpMcpServer
+    port*: int
+    address*: string
+
+proc serverThreadProc(data: ServerThreadData) {.thread.} =
+  ## Thread function to run the HTTP server
+  try:
+    data.server.serve(data.port, data.address)
+  except Exception as e:
+    # Server stopped, this is expected during test cleanup
+    discard
+
+proc startTestHttpServer*(port: int = 0, address: string = "localhost"): (HttpMcpServer, Thread[ServerThreadData], int) =
+  ## Start a test HTTP server in a background thread.
+  ## Returns the server instance, the thread handle, and the actual port.
+  ## If port is 0, uses a random available port.
+
+  let server = createTestHttpServer()
+
+  # Use random port if not specified
+  let actualPort = if port == 0:
+    randomize()
+    8080 + rand(1000)  # Random port between 8080-9080
+  else:
+    port
+
+  let threadData = ServerThreadData(
+    server: server,
+    port: actualPort,
+    address: address
+  )
+
+  var serverThread: Thread[ServerThreadData]
+  createThread(serverThread, serverThreadProc, threadData)
+
+  # Give server time to start
+  sleep(300)
+
+  # Verify server is running
+  if waitForServerReady(actualPort, 2000):
+    return (server, serverThread, actualPort)
+  else:
+    raise newException(CatchableError, &"Test server failed to start on port {actualPort}")
+
+proc stopTestHttpServer*(server: HttpMcpServer, serverThread: Thread[ServerThreadData]) =
+  ## Stop the test HTTP server and wait for the thread to finish.
+  ## Note: We don't call server.close() due to a SIGSEGV in mummy's dealloc
+  ## Instead we just wait briefly and let the process exit clean up
+  sleep(50)
