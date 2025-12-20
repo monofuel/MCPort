@@ -25,6 +25,15 @@ proc httpNotificationCallback(httpServer: HttpMcpServer, notification: JsonNode)
   ## Notification callback for HTTP transport - stores notifications in queue.
   httpServer.notifications.add(notification)
 
+proc checkAuth(httpServer: HttpMcpServer, request: Request): bool =
+  ## Check authorization using the configured auth callback.
+  ## Returns true if authorized, false if not authorized or if auth callback throws.
+  try:
+    return httpServer.authCb(request)
+  except Exception as e:
+    httpServer.log("Auth callback error: " & e.msg)
+    return false
+
 proc handleJsonRpcRequest(httpServer: HttpMcpServer, request: Request) =
   ## Handle JSON-RPC requests to the /mcp endpoint.
   try:
@@ -48,13 +57,7 @@ proc handleJsonRpcRequest(httpServer: HttpMcpServer, request: Request) =
       return
 
     # Authorization check using provided callback
-    var isAuthorized = false
-    try:
-      isAuthorized = httpServer.authCb(request)
-    except Exception as e:
-      httpServer.log("Auth callback error: " & e.msg)
-      isAuthorized = false
-    if not isAuthorized:
+    if not httpServer.checkAuth(request):
       var headers: HttpHeaders
       headers["content-type"] = "application/json"
       request.respond(401, headers, "{\"error\":\"Unauthorized\"}")
@@ -99,13 +102,7 @@ proc handleServerInfoRequest(httpServer: HttpMcpServer, request: Request) =
       return
 
     # Authorization check using provided callback
-    var isAuthorized = false
-    try:
-      isAuthorized = httpServer.authCb(request)
-    except Exception as e:
-      httpServer.log("Auth callback error: " & e.msg)
-      isAuthorized = false
-    if not isAuthorized:
+    if not httpServer.checkAuth(request):
       var headers: HttpHeaders
       headers["content-type"] = "application/json"
       request.respond(401, headers, "{\"error\":\"Unauthorized\"}")
@@ -145,13 +142,7 @@ proc handleNotificationsRequest(httpServer: HttpMcpServer, request: Request) =
       return
 
     # Authorization check using provided callback
-    var isAuthorized = false
-    try:
-      isAuthorized = httpServer.authCb(request)
-    except Exception as e:
-      httpServer.log("Auth callback error: " & e.msg)
-      isAuthorized = false
-    if not isAuthorized:
+    if not httpServer.checkAuth(request):
       var headers: HttpHeaders
       headers["content-type"] = "application/json"
       request.respond(401, headers, "{\"error\":\"Unauthorized\"}")

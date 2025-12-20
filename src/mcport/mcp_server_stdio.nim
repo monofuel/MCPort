@@ -26,7 +26,8 @@ proc handleStdioRequest(server: McpServer, line: string) =
   let isNotification = try:
     let parsed = line.parseJson()
     not parsed.hasKey("id")
-  except:
+  except jsony.JsonError as e:
+    log("JSON parsing failed for incoming message: " & e.msg)
     false  # If parsing fails, assume it's a request so we send an error response
 
   let result = server.handleRequest(line)
