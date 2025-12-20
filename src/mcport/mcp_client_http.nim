@@ -32,6 +32,10 @@ proc connect*(client: HttpMcpClient) =
   })
   client.log(fmt"Connected to: {client.baseUrl}")
 
+proc isConnected*(client: HttpMcpClient): bool =
+  ## Check if the client is connected.
+  client.httpClient != nil
+
 proc sendRequest(client: HttpMcpClient, request: ClientRequest): ClientResult =
   ## Send a JSON-RPC request via HTTP.
   if client.httpClient == nil:
@@ -54,8 +58,11 @@ proc sendRequest(client: HttpMcpClient, request: ClientRequest): ClientResult =
 
 proc initialize*(client: HttpMcpClient) =
   ## Initialize the connection with the server.
+  if not client.isConnected():
+    raise newException(CatchableError, "Client not connected to server")
+
   client.log("Initializing connection...")
-  
+
   # Send initialize request
   let initRequest = client.client.createInitializeRequest()
   let initResult = client.sendRequest(initRequest)
@@ -88,8 +95,11 @@ proc initialize*(client: HttpMcpClient) =
 
 proc listTools*(client: HttpMcpClient) =
   ## List available tools from the server.
+  if not client.isConnected():
+    raise newException(CatchableError, "Client not connected to server")
+
   client.log("Listing available tools...")
-  
+
   if not client.client.initialized:
     raise newException(CatchableError, "Client not initialized")
   
@@ -106,8 +116,11 @@ proc listTools*(client: HttpMcpClient) =
 
 proc callTool*(client: HttpMcpClient, toolName: string, arguments: JsonNode = %*{}): JsonNode =
   ## Call a tool on the server and return the result content.
+  if not client.isConnected():
+    raise newException(CatchableError, "Client not connected to server")
+
   client.log(fmt"Calling tool: {toolName}")
-  
+
   if not client.client.initialized:
     raise newException(CatchableError, "Client not initialized")
   
@@ -124,6 +137,9 @@ proc callTool*(client: HttpMcpClient, toolName: string, arguments: JsonNode = %*
 
 proc getAvailableTools*(client: HttpMcpClient): seq[string] =
   ## Get list of available tool names from the server.
+  if not client.isConnected():
+    raise newException(CatchableError, "Client not connected to server")
+
   if not client.client.initialized:
     raise newException(CatchableError, "Client not initialized")
   
@@ -143,10 +159,6 @@ proc getAvailableTools*(client: HttpMcpClient): seq[string] =
         toolNames.add(tool["name"].getStr())
   
   return toolNames
-
-proc isConnected*(client: HttpMcpClient): bool =
-  ## Check if the client is connected.
-  client.httpClient != nil
 
 proc close*(client: HttpMcpClient) =
   ## Close the HTTP client connection.

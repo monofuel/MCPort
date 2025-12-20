@@ -35,6 +35,10 @@ proc connect*(client: StdioMcpClient, command: string, args: seq[string] = @[]) 
   except Exception as e:
     raise newException(CatchableError, fmt"Failed to start MCP server process: {e.msg}")
 
+proc isConnected*(client: StdioMcpClient): bool =
+  ## Check if the client is connected to a server.
+  client.process != nil and client.process.running()
+
 proc sendRequest(client: StdioMcpClient, request: ClientRequest) =
   ## Send a JSON-RPC request to the server.
   let jsonRequest = request.toJson()
@@ -68,8 +72,11 @@ proc sendAndReceive(client: StdioMcpClient, request: ClientRequest): ClientResul
 
 proc initialize*(client: StdioMcpClient) =
   ## Initialize the connection with the server.
+  if not client.isConnected():
+    raise newException(CatchableError, "Client not connected to server")
+
   client.log("Initializing connection...")
-  
+
   # Send initialize request
   let initRequest = client.client.createInitializeRequest()
   let initResult = client.sendAndReceive(initRequest)
@@ -90,11 +97,14 @@ proc initialize*(client: StdioMcpClient) =
 
 proc listTools*(client: StdioMcpClient) =
   ## List available tools from the server.
+  if not client.isConnected():
+    raise newException(CatchableError, "Client not connected to server")
+
   client.log("Listing available tools...")
-  
+
   if not client.client.initialized:
     raise newException(CatchableError, "Client not initialized")
-  
+
   let listRequest = client.client.createToolsListRequest()
   let listResult = client.sendAndReceive(listRequest)
   
@@ -108,11 +118,14 @@ proc listTools*(client: StdioMcpClient) =
 
 proc callTool*(client: StdioMcpClient, toolName: string, arguments: JsonNode = %*{}): JsonNode =
   ## Call a tool on the server and return the result content.
+  if not client.isConnected():
+    raise newException(CatchableError, "Client not connected to server")
+
   client.log(fmt"Calling tool: {toolName}")
-  
+
   if not client.client.initialized:
     raise newException(CatchableError, "Client not initialized")
-  
+
   let callRequest = client.client.createToolCallRequest(toolName, arguments)
   let callResult = client.sendAndReceive(callRequest)
   
@@ -126,9 +139,12 @@ proc callTool*(client: StdioMcpClient, toolName: string, arguments: JsonNode = %
 
 proc getAvailableTools*(client: StdioMcpClient): seq[string] =
   ## Get list of available tool names from the server.
+  if not client.isConnected():
+    raise newException(CatchableError, "Client not connected to server")
+
   if not client.client.initialized:
     raise newException(CatchableError, "Client not initialized")
-  
+
   let listRequest = client.client.createToolsListRequest()
   let listResult = client.sendAndReceive(listRequest)
   
@@ -145,10 +161,6 @@ proc getAvailableTools*(client: StdioMcpClient): seq[string] =
         toolNames.add(tool["name"].getStr())
   
   return toolNames
-
-proc isConnected*(client: StdioMcpClient): bool =
-  ## Check if the client is connected to a server.
-  client.process != nil and client.process.running()
 
 proc close*(client: StdioMcpClient) =
   ## Close the connection to the server.

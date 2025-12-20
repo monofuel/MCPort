@@ -1,7 +1,7 @@
 import
-  std/[json, options, strformat],
+  std/[json, options, strformat, osproc],
   jsony,
-  mcport/mcp_core
+  mcport/[mcp_core, mcp_server_http]
 
 const
   TestProtocolVersion = "2025-06-18"
@@ -321,3 +321,208 @@ proc registerRichContentTestPrompt*(server: McpServer): void =
         ]
 
   server.registerPrompt(richPrompt, richPromptHandler)
+
+# Client-specific test helpers
+
+proc makeClientSuccessResponse*(id: int, responseResult: JsonNode): string =
+  ## Create a successful client response.
+  let response = %*{
+    "jsonrpc": "2.0",
+    "id": id,
+    "result": responseResult
+  }
+  return response.toJson()
+
+proc makeClientErrorResponse*(id: int, code: int, message: string, data: JsonNode = nil): string =
+  ## Create an error client response.
+  let error = %*{
+    "code": code,
+    "message": message
+  }
+  if data != nil:
+    error["data"] = data
+
+  let response = %*{
+    "jsonrpc": "2.0",
+    "id": id,
+    "error": error
+  }
+  return response.toJson()
+
+proc makeInitializeSuccessResponse*(id: int = 1): string =
+  ## Create a successful initialize response.
+  let result = %*{
+    "protocolVersion": TestProtocolVersion,
+    "capabilities": {
+      "tools": {"listChanged": true},
+      "prompts": {"listChanged": true},
+      "resources": {"listChanged": true, "subscribe": true},
+      "progress": true
+    },
+    "serverInfo": {
+      "name": "TestServer",
+      "version": "1.0.0"
+    }
+  }
+  return makeClientSuccessResponse(id, result)
+
+proc makeToolsListSuccessResponse*(id: int = 2): string =
+  ## Create a successful tools/list response.
+  let result = %*{
+    "tools": [
+      {
+        "name": "test_tool",
+        "description": "A test tool",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "arg": {"type": "string"}
+          }
+        }
+      }
+    ],
+    "nextCursor": nil
+  }
+  return makeClientSuccessResponse(id, result)
+
+proc makeToolCallSuccessResponse*(id: int = 3, content: JsonNode = %*[{"type": "text", "text": "Tool executed"}]): string =
+  ## Create a successful tools/call response.
+  let result = %*{
+    "content": content,
+    "isError": false
+  }
+  return makeClientSuccessResponse(id, result)
+
+proc makeToolCallRichContentResponse*(id: int = 3, contentType: string): string =
+  ## Create a rich content tool call response.
+  var content: JsonNode
+
+  case contentType:
+    of "text":
+      content = %*[{"type": "text", "text": "Rich text content"}]
+    of "image":
+      content = %*[{"type": "image", "data": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "mimeType": "image/png"}]
+    of "audio":
+      content = %*[{"type": "audio", "data": "data:audio/wav;base64,UklGRnoGAABXQVZFZm10IAAAAAEAAQARAAAAEAAAAAEACABkYXRhAgAAAAEA", "mimeType": "audio/wav"}]
+    of "resource_link":
+      content = %*[{"type": "resource_link", "uri": "test://linked", "name": "Linked Resource"}]
+    of "embedded_resource":
+      content = %*[{"type": "resource", "resource": {"uri": "test://embedded", "mimeType": "text/plain", "text": "Embedded content"}}]
+    else:
+      content = %*[{"type": "text", "text": "Unknown content type"}]
+
+  return makeToolCallSuccessResponse(id, content)
+
+proc makePromptsListSuccessResponse*(id: int = 4): string =
+  ## Create a successful prompts/list response.
+  let result = %*{
+    "prompts": [
+      {
+        "name": "test_prompt",
+        "description": "A test prompt",
+        "arguments": [
+          {"name": "topic", "description": "The topic", "required": true}
+        ]
+      }
+    ],
+    "nextCursor": nil
+  }
+  return makeClientSuccessResponse(id, result)
+
+proc makePromptsGetSuccessResponse*(id: int = 5): string =
+  ## Create a successful prompts/get response.
+  let result = %*{
+    "description": "A test prompt",
+    "messages": [
+      {
+        "role": "user",
+        "content": {"type": "text", "text": "Test prompt content"}
+      }
+    ]
+  }
+  return makeClientSuccessResponse(id, result)
+
+proc makeResourcesListSuccessResponse*(id: int = 6): string =
+  ## Create a successful resources/list response.
+  let result = %*{
+    "resources": [
+      {
+        "uri": "test://resource",
+        "name": "Test Resource",
+        "description": "A test resource",
+        "mimeType": "application/json"
+      }
+    ],
+    "nextCursor": nil
+  }
+  return makeClientSuccessResponse(id, result)
+
+proc makeResourceReadSuccessResponse*(id: int = 7): string =
+  ## Create a successful resources/read response.
+  let result = %*{
+    "contents": [
+      {
+        "uri": "test://resource",
+        "mimeType": "application/json",
+        "text": "{\"data\": \"test content\"}"
+      }
+    ]
+  }
+  return makeClientSuccessResponse(id, result)
+
+proc makeResourceTemplatesListSuccessResponse*(id: int = 8): string =
+  ## Create a successful resources/templates/list response.
+  let result = %*{
+    "resourceTemplates": [
+      {
+        "uriTemplate": "test://{category}/{id}",
+        "name": "Test Template",
+        "description": "A test template"
+      }
+    ]
+  }
+  return makeClientSuccessResponse(id, result)
+
+proc makeResourceSubscribeSuccessResponse*(id: int = 9): string =
+  ## Create a successful resources/subscribe response.
+  return makeClientSuccessResponse(id, %*{})
+
+# Error response helpers
+proc makeMethodNotFoundErrorResponse*(id: int = 3): string =
+  ## Create a method not found error response.
+  return makeClientErrorResponse(id, -32601, "Method not found")
+
+proc makeInvalidParamsErrorResponse*(id: int = 3): string =
+  ## Create an invalid params error response.
+  return makeClientErrorResponse(id, -32602, "Invalid params")
+
+proc makeInternalErrorResponse*(id: int = 3): string =
+  ## Create an internal error response.
+  return makeClientErrorResponse(id, -32603, "Internal error")
+
+proc makeServerNotInitializedErrorResponse*(id: int = 3): string =
+  ## Create a server not initialized error response.
+  return makeClientErrorResponse(id, -32001, "Server not initialized")
+
+proc createTestStdioServerProcess*(): Process =
+  ## Create a test stdio server process that responds with predefined responses.
+  ## This is a helper for integration testing - returns a process that echoes test responses.
+  when defined(windows):
+    return startProcess("cmd", args = ["/c", "echo {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"TestServer\",\"version\":\"1.0.0\"}}}"])
+  else:
+    return startProcess("sh", args = ["-c", "echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"TestServer\",\"version\":\"1.0.0\"}}}'"])
+
+proc createTestHttpServer*(): HttpMcpServer =
+  ## Create a test HTTP server for integration testing.
+  let server = createAndInitializeTestServer()
+  return newHttpMcpServer(server)
+
+proc waitForHttpServer*(server: HttpMcpServer, port: int = 8081): void =
+  ## Start HTTP server in background for testing.
+  ## Note: This is for integration testing - in unit tests you may want to use a different approach.
+  server.serve(port)
+
+proc createMockHttpResponse*(statusCode: int, body: string, contentType: string = "application/json"): string =
+  ## Create a mock HTTP response for testing (simplified).
+  ## In real testing, you'd use a proper HTTP mocking library.
+  body
