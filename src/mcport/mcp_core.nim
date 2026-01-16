@@ -662,10 +662,8 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
           toolObj["annotations"] = tool.annotations.get
         toolsArray.add(toolObj)
       
-      let response = createResponse(request.id, %*{
-        "tools": toolsArray,
-        "nextCursor": nil
-      })
+      # Since MCPort doesn't implement pagination, omit nextCursor when there's no cursor
+      let response = createResponse(request.id, %*{"tools": toolsArray})
       return McpResult(isError: false, response: response)
     
     of "tools/call":
@@ -775,10 +773,8 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
           promptObj["title"] = %prompt.title.get
         promptsArray.add(promptObj)
 
-      let response = createResponse(request.id, %*{
-        "prompts": promptsArray,
-        "nextCursor": nil
-      })
+      # Since MCPort doesn't implement pagination, omit nextCursor when there's no cursor
+      let response = createResponse(request.id, %*{"prompts": promptsArray})
       return McpResult(isError: false, response: response)
 
     of "prompts/get":
@@ -850,10 +846,8 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
           resourceObj["annotations"] = resource.annotations.get
         resourcesArray.add(resourceObj)
 
-      let response = createResponse(request.id, %*{
-        "resources": resourcesArray,
-        "nextCursor": nil
-      })
+      # Since MCPort doesn't implement pagination, omit nextCursor when there's no cursor
+      let response = createResponse(request.id, %*{"resources": resourcesArray})
       return McpResult(isError: false, response: response)
 
     of "resources/read":

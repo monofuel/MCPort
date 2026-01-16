@@ -380,8 +380,7 @@ proc makeToolsListSuccessResponse*(id: int = 2): string =
           }
         }
       }
-    ],
-    "nextCursor": nil
+    ]
   }
   return makeClientSuccessResponse(id, result)
 
@@ -424,8 +423,7 @@ proc makePromptsListSuccessResponse*(id: int = 4): string =
           {"name": "topic", "description": "The topic", "required": true}
         ]
       }
-    ],
-    "nextCursor": nil
+    ]
   }
   return makeClientSuccessResponse(id, result)
 
@@ -452,8 +450,7 @@ proc makeResourcesListSuccessResponse*(id: int = 6): string =
         "description": "A test resource",
         "mimeType": "application/json"
       }
-    ],
-    "nextCursor": nil
+    ]
   }
   return makeClientSuccessResponse(id, result)
 

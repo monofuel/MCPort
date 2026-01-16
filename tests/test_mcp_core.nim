@@ -33,6 +33,8 @@ suite "MCP Core Tests":
     let tools = result.response.result["tools"]
     check tools.len == 1
     check tools[0]["name"].getStr() == "secret_fetcher"
+    # nextCursor should be omitted when there's no pagination
+    check not result.response.result.hasKey("nextCursor")
 
   test "tools/call with default recipient":
     let callRequest = makeToolCallRequest(3, "secret_fetcher")
@@ -89,6 +91,8 @@ suite "MCP Core Tests":
     check prompts[0]["arguments"].len == 1
     check prompts[0]["arguments"][0]["name"].getStr() == "topic"
     check prompts[0]["arguments"][0]["required"].getBool() == true
+    # nextCursor should be omitted when there's no pagination
+    check not result.response.result.hasKey("nextCursor")
 
   test "prompts/get request with arguments":
     let getRequest = makePromptsGetRequest(8, "code_review", %*{"topic": "test code"})
@@ -140,6 +144,8 @@ suite "MCP Core Tests":
     check resources[0]["uri"].getStr() == "config://test-server"
     check resources[0]["name"].getStr() == "Test Server Config"
     check resources[0]["mimeType"].getStr() == "application/json"
+    # nextCursor should be omitted when there's no pagination
+    check not result.response.result.hasKey("nextCursor")
 
   test "resources/read request with text content":
     let readRequest = makeResourceReadRequest(13, "config://test-server")
