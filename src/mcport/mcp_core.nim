@@ -85,6 +85,7 @@ type
     initialized*: bool
     serverInfo*: ServerInfo
     capabilities*: ServerCapabilities
+    toolListVersion*: int
     tools*: Table[string, McpTool]
     toolHandlers*: Table[string, ToolHandler]
     richToolHandlers*: Table[string, RichToolHandler]
@@ -250,6 +251,7 @@ proc newMcpServer*(name: string, version: string): McpServer =
       resources: ResourceCaps(listChanged: true, subscribe: true),
       progress: false  # Opt-in capability, defaults to false
     ),
+    toolListVersion: 0,
     tools: initTable[string, McpTool](),
     toolHandlers: initTable[string, ToolHandler](),
     richToolHandlers: initTable[string, RichToolHandler](),
@@ -269,6 +271,7 @@ proc registerTool*(server: McpServer, tool: McpTool, handler: ToolHandler) =
   ## Register a tool with the MCP server.
   server.tools[tool.name] = tool
   server.toolHandlers[tool.name] = handler
+  inc server.toolListVersion
   # Notify that tools list has changed
   if server.notificationCallback.isSome:
     server.notificationCallback.get()(%*{
@@ -280,6 +283,7 @@ proc registerRichTool*(server: McpServer, tool: McpTool, handler: RichToolHandle
   ## Register a rich tool with the MCP server.
   server.tools[tool.name] = tool
   server.richToolHandlers[tool.name] = handler
+  inc server.toolListVersion
   # Notify that tools list has changed
   if server.notificationCallback.isSome:
     server.notificationCallback.get()(%*{
@@ -291,7 +295,29 @@ proc registerProgressTool*(server: McpServer, tool: McpTool, handler: ProgressTo
   ## Register a progress-enabled tool with the MCP server.
   server.tools[tool.name] = tool
   server.progressToolHandlers[tool.name] = handler
+  inc server.toolListVersion
   # Notify that tools list has changed
+  if server.notificationCallback.isSome:
+    server.notificationCallback.get()(%*{
+      "jsonrpc": "2.0",
+      "method": "notifications/tools/list_changed"
+    })
+
+proc unregisterTool*(server: McpServer, toolName: string) =
+  ## Unregister a tool and all associated handlers from the MCP server.
+  if toolName notin server.tools:
+    return
+
+  server.tools.del(toolName)
+
+  if toolName in server.toolHandlers:
+    server.toolHandlers.del(toolName)
+  if toolName in server.richToolHandlers:
+    server.richToolHandlers.del(toolName)
+  if toolName in server.progressToolHandlers:
+    server.progressToolHandlers.del(toolName)
+
+  inc server.toolListVersion
   if server.notificationCallback.isSome:
     server.notificationCallback.get()(%*{
       "jsonrpc": "2.0",
