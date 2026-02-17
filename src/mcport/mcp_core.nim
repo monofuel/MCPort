@@ -11,21 +11,21 @@ type
     id*: int
     `method`*: string
     params*: JsonNode
-    
+
   RpcNotification* = object
     jsonrpc*: string
     `method`*: string
-    
+
   RpcResponse* = object
     jsonrpc*: string
     id*: int
     result*: JsonNode
-    
+
   RpcError* = object
     jsonrpc*: string
     id*: int
     error*: ErrorDetail
-    
+
   ErrorDetail* = object
     code*: int
     message*: string
@@ -35,7 +35,7 @@ type
     protocolVersion*: string
     capabilities*: JsonNode
     clientInfo*: JsonNode
-    
+
   ServerCapabilities* = object
     tools*: ToolCaps
     prompts*: PromptCaps
@@ -243,7 +243,11 @@ type
 proc newMcpServer*(name: string, version: string): McpServer =
   ## Create a new MCP server instance.
   result = McpServer(
-    initialized: false,
+    initialized: true,
+    # NB. technically, MCP is supposed to enforce a client sends the initialize request first.
+    # HOWEVER I found in practice that clients do not handle server restarts well.
+    # so let's just pretend the server is always initialized because I don't really care?
+    # initialized: false,
     serverInfo: ServerInfo(name: name, version: version),
     capabilities: ServerCapabilities(
       tools: ToolCaps(listChanged: true),
@@ -597,7 +601,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
   try:
     # First, try to determine if this is a notification or request
     let parsed = line.parseJson()
-    
+
     # Check if it has an 'id' field - if not, it's a notification
     if not parsed.hasKey("id"):
       # This is a notification - validate minimal JSON-RPC shape
@@ -622,7 +626,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
 
       # For notifications, return a dummy response that won't be sent
       return McpResult(isError: false, response: createResponse(0, %*{}))
-    
+
     # This is a request (has 'id' field) - parse as RpcRequest
     let request = line.fromJson(RpcRequest)
     if request.jsonrpc != "2.0":
@@ -639,7 +643,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       #     isError: true,
       #     error: createError(request.id, -32000, "Already initialized")
       #   )
-      
+
       discard request.params.toJson().fromJson(InitParams)  # Validate params
       let response = createResponse(request.id, %*{
         "protocolVersion": MCP_VERSION,
@@ -663,17 +667,17 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       })
       server.initialized = true
       return McpResult(isError: false, response: response)
-    
+
     of "tools/list":
       if not server.initialized:
         return McpResult(
           isError: true,
           error: createError(request.id, -32001, "Server not initialized")
         )
-        
+
       discard request.params.toJson().fromJson(ListParams)  # Validate params
       var toolsArray = newJArray()
-      
+
       for tool in server.tools.values:
         var toolObj = %*{
           "name": tool.name,
@@ -687,18 +691,18 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         if tool.annotations.isSome:
           toolObj["annotations"] = tool.annotations.get
         toolsArray.add(toolObj)
-      
+
       # Since MCPort doesn't implement pagination, omit nextCursor when there's no cursor
       let response = createResponse(request.id, %*{"tools": toolsArray})
       return McpResult(isError: false, response: response)
-    
+
     of "tools/call":
       if not server.initialized:
         return McpResult(
           isError: true,
           error: createError(request.id, -32001, "Server not initialized")
         )
-        
+
       let params = request.params.toJson().fromJson(CallToolParams)
       let progressToken = $request.id  # Use request ID as progress token
       if params.name in server.progressToolHandlers and server.progressReporter.isSome:
@@ -769,7 +773,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
           isError: true,
           error: createError(request.id, -32602, "Unknown tool name")
         )
-    
+
     of "prompts/list":
       if not server.initialized:
         return McpResult(
@@ -992,15 +996,15 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         isError: true,
         error: createError(request.id, -32601, "get_resource method not implemented")
       )
-    
+
     else:
       return McpResult(
         isError: true,
         error: createError(request.id, -32601, "Method not found")
       )
-  
+
   except jsony.JsonError:
     return McpResult(
       isError: true,
       error: createError(0, -32700, "Invalid JSON")
-    ) 
+    )
