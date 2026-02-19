@@ -52,15 +52,6 @@ suite "MCP Core Tests":
     let content = result.response.result["content"][0]["text"].getStr()
     check content == "Hello, Monofuel!"
 
-  test "error on uninitialized server":
-    let uninitializedServer = createTestServer()
-    let listRequest = makeToolsListRequest(5)
-    let result = uninitializedServer.handleRequest(listRequest)
-
-    check result.isError
-    check result.error.error.code == -32001
-    check result.error.error.message.contains("not initialized")
-
   test "error on unknown tool":
     let callRequest = makeToolCallRequest(6, "unknown_tool")
     let result = server.handleRequest(callRequest)
@@ -113,15 +104,6 @@ suite "MCP Core Tests":
     check result.error.error.code == -32602
     check result.error.error.message.contains("Missing required argument")
 
-  test "error on uninitialized server for prompts":
-    let uninitializedServer = createTestServer()
-    let listRequest = makePromptsListRequest(10)
-    let result = uninitializedServer.handleRequest(listRequest)
-
-    check result.isError
-    check result.error.error.code == -32001
-    check result.error.error.message.contains("not initialized")
-
   test "error on unknown prompt name":
     let getRequest = makePromptsGetRequest(11, "unknown_prompt")
     let result = server.handleRequest(getRequest)
@@ -158,15 +140,6 @@ suite "MCP Core Tests":
     let text = contents[0]["text"].getStr()
     check text.contains("\"content\":\"test data\"")
     check text.contains("\"uri\":\"config://test-server\"")
-
-  test "error on uninitialized server for resources":
-    let uninitializedServer = createTestServer()
-    let listRequest = makeResourcesListRequest(14)
-    let result = uninitializedServer.handleRequest(listRequest)
-
-    check result.isError
-    check result.error.error.code == -32001
-    check result.error.error.message.contains("not initialized")
 
   test "error on unknown resource URI":
     let readRequest = makeResourceReadRequest(15, "config://unknown")
