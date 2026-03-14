@@ -1,5 +1,5 @@
 import
-  std/[unittest, httpclient, json, strformat, options, strutils],
+  std/[unittest, json, strformat, options, strutils],
   mcport/[mcp_client_http, mcp_client_core, mcp_server_http],
   ./test_helpers
 
@@ -13,7 +13,7 @@ suite "HTTP Client Tests":
     check client.client.clientInfo.version == "1.0.0"
     check not client.client.initialized
     check client.baseUrl == "http://localhost:8080"
-    check client.httpClient == nil
+    check not client.connected
     check client.logEnabled == true
 
   test "client creation with logging disabled":
@@ -21,25 +21,22 @@ suite "HTTP Client Tests":
 
     check not client.logEnabled
 
-  test "connect sets up HTTP client":
+  test "connect sets up curly client":
     let client = newHttpMcpClient("TestHttpClient", "1.0.0", "http://localhost:8080")
 
     client.connect()
 
-    check client.httpClient != nil
-    check client.httpClient.headers != nil
-    check client.httpClient.headers["Content-Type"] == "application/json"
-    check client.httpClient.headers["Accept"] == "application/json"
+    check client.connected
 
-  test "close cleans up HTTP client":
+  test "close cleans up connection":
     let client = newHttpMcpClient("TestHttpClient", "1.0.0", "http://localhost:8080")
     client.connect()
 
-    check client.httpClient != nil
+    check client.connected
 
     client.close()
 
-    check client.httpClient == nil
+    check not client.connected
 
   test "isConnected":
     let client = newHttpMcpClient("TestHttpClient", "1.0.0", "http://localhost:8080")

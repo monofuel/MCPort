@@ -175,7 +175,7 @@ type
 
   ToolResult* = object
     content*: seq[ToolContent]
-    structuredContent*: Option[JsonNode]
+    structuredContent*: Option[JsonNode] ## Must be a JObject per MCP spec. Arrays are not valid here; wrap them in an object (e.g. {"items": [...]}).
     isError*: bool
 
   PromptHandler* = proc(arguments: JsonNode): seq[PromptMessage] {.gcsafe.}
