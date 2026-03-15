@@ -50,7 +50,7 @@ proc sendRequest(client: HttpMcpClient, request: ClientRequest): ClientResult =
     headers["Accept"] = "application/json"
 
     let resp = client.curly.post(
-      client.baseUrl & "/mcp",
+      client.baseUrl,
       headers,
       jsonRequest
     )

@@ -103,7 +103,7 @@ suite "HTTP Client Integration Tests":
     ensureIntegrationTestServer()
 
   test "full workflow - initialize and list tools":
-    let client = newHttpMcpClient("TestClient", "1.0.0", &"http://localhost:{integrationTestServerPort}")
+    let client = newHttpMcpClient("TestClient", "1.0.0", &"http://localhost:{integrationTestServerPort}/mcp")
     defer: client.close()
 
     client.connect()
@@ -120,7 +120,7 @@ suite "HTTP Client Integration Tests":
     check "secret_fetcher" in tools
 
   test "full workflow - call tool":
-    let client = newHttpMcpClient("TestClient", "1.0.0", &"http://localhost:{integrationTestServerPort}")
+    let client = newHttpMcpClient("TestClient", "1.0.0", &"http://localhost:{integrationTestServerPort}/mcp")
     defer: client.close()
 
     client.connect()
@@ -135,7 +135,7 @@ suite "HTTP Client Integration Tests":
     check result["isError"].getBool() == false
 
   test "full workflow - get available tools":
-    let client = newHttpMcpClient("TestClient", "1.0.0", &"http://localhost:{integrationTestServerPort}")
+    let client = newHttpMcpClient("TestClient", "1.0.0", &"http://localhost:{integrationTestServerPort}/mcp")
     defer: client.close()
 
     client.connect()
@@ -147,7 +147,7 @@ suite "HTTP Client Integration Tests":
     check "secret_fetcher" in tools
 
   test "multiple tool calls":
-    let client = newHttpMcpClient("TestClient", "1.0.0", &"http://localhost:{integrationTestServerPort}")
+    let client = newHttpMcpClient("TestClient", "1.0.0", &"http://localhost:{integrationTestServerPort}/mcp")
     defer: client.close()
 
     client.connect()
@@ -158,7 +158,7 @@ suite "HTTP Client Integration Tests":
       check result["content"][0]["text"].getStr().contains(&"Hello, User{i}!")
 
   test "reconnect after close":
-    let client = newHttpMcpClient("TestClient", "1.0.0", &"http://localhost:{integrationTestServerPort}")
+    let client = newHttpMcpClient("TestClient", "1.0.0", &"http://localhost:{integrationTestServerPort}/mcp")
 
     client.connect()
     client.initialize()
@@ -177,7 +177,7 @@ suite "HTTP Client Integration Tests":
     client.close()
 
   test "callTool fails when not initialized":
-    let client = newHttpMcpClient("TestClient", "1.0.0", &"http://localhost:{integrationTestServerPort}")
+    let client = newHttpMcpClient("TestClient", "1.0.0", &"http://localhost:{integrationTestServerPort}/mcp")
     defer: client.close()
 
     client.connect()
@@ -186,7 +186,7 @@ suite "HTTP Client Integration Tests":
       discard client.callTool("secret_fetcher")
 
   test "server error handling":
-    let client = newHttpMcpClient("TestClient", "1.0.0", &"http://localhost:{integrationTestServerPort}")
+    let client = newHttpMcpClient("TestClient", "1.0.0", &"http://localhost:{integrationTestServerPort}/mcp")
     defer: client.close()
 
     client.connect()
