@@ -999,13 +999,6 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
           error: createError(request.id, -32002, "Resource not found", some(%*{"uri": params.uri}))
         )
 
-    of "get_resource":
-      # TODO do this! (legacy method, might be deprecated)
-      return McpResult(
-        isError: true,
-        error: createError(request.id, -32601, "get_resource method not implemented")
-      )
-
     else:
       return McpResult(
         isError: true,
