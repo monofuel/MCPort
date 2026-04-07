@@ -333,4 +333,53 @@ suite "MCP Client Core Tests":
     check not toolResult.isError
     check toolResult.content.len == 2
     check toolResult.content[0].text == "First"
-    check toolResult.content[1].text == "Second" 
+    check toolResult.content[1].text == "Second"
+
+  test "handleInitializeResponse with error response":
+    let client = newMcpClient("TestClient", "1.0.0")
+    let errResponse = """{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"Internal error"}}"""
+    let result = parseResponse(errResponse)
+
+    let success = handleInitializeResponse(client, result)
+    check not success
+    check not client.initialized
+    check client.serverInfo.isNone
+
+  test "handleToolsListResponse with error response":
+    let client = newMcpClient("TestClient", "1.0.0")
+    let errResponse = """{"jsonrpc":"2.0","id":2,"error":{"code":-32603,"message":"Internal error"}}"""
+    let result = parseResponse(errResponse)
+
+    let success = handleToolsListResponse(client, result)
+    check not success
+    check client.availableTools.len == 0
+
+  test "handleToolsListResponse replaces previous tools":
+    let client = newMcpClient("TestClient", "1.0.0")
+    let firstResponse = """{"jsonrpc":"2.0","id":3,"result":{"tools":[{"name":"tool_a","description":"A","inputSchema":{"type":"object"}}]}}"""
+    discard handleToolsListResponse(client, parseResponse(firstResponse))
+    check client.availableTools.len == 1
+    check client.availableTools.hasKey("tool_a")
+
+    let secondResponse = """{"jsonrpc":"2.0","id":4,"result":{"tools":[{"name":"tool_b","description":"B","inputSchema":{"type":"object"}},{"name":"tool_c","description":"C","inputSchema":{"type":"object"}}]}}"""
+    let success = handleToolsListResponse(client, parseResponse(secondResponse))
+    check success
+    check client.availableTools.len == 2
+    check not client.availableTools.hasKey("tool_a")
+    check client.availableTools.hasKey("tool_b")
+    check client.availableTools.hasKey("tool_c")
+
+  test "handleToolCallResponse with empty content array":
+    let emptyContentResponse = """{"jsonrpc":"2.0","id":5,"result":{"content":[],"isError":false}}"""
+    let result = parseResponse(emptyContentResponse)
+    let toolResult = handleToolCallResponse(result)
+
+    check not toolResult.isError
+    check toolResult.content.len == 0
+
+  test "parseResponse with notification-style response (no id, no error)":
+    let notificationResponse = """{"jsonrpc":"2.0","result":{}}"""
+    let result = parseResponse(notificationResponse)
+
+    check not result.isError
+    check result.response.id == 0
