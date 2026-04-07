@@ -202,7 +202,8 @@ type
     of true:
       text*: string
     of false:
-      blob*: string  # Base64-encoded binary data.
+      blob*: string     # Base64-encoded binary data.
+      mimeType*: string # MIME type of the blob content.
 
   ResourceHandler* = proc(uri: string): ResourceContent {.gcsafe.}
 
@@ -506,9 +507,9 @@ proc textResourceContent*(text: string): ResourceContent =
   ## Create text resource content.
   ResourceContent(isText: true, text: text)
 
-proc blobResourceContent*(blob: string): ResourceContent =
+proc blobResourceContent*(blob: string, mimeType: string = ""): ResourceContent =
   ## Create blob resource content from base64-encoded data.
-  ResourceContent(isText: false, blob: blob)
+  ResourceContent(isText: false, blob: blob, mimeType: mimeType)
 
 proc toolContentToJson*(content: ToolContent): JsonNode =
   ## Convert ToolContent to JsonNode for serialization.
@@ -900,14 +901,15 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         try:
           let content = server.progressResourceHandlers[params.uri](params.uri, server.progressReporter.get())
           let resource = server.resources[params.uri]
+          let effectiveMimeType = if not content.isText and content.mimeType.len > 0: content.mimeType else: resource.mimeType.get("")
           var contentObj = %*{
             "uri": params.uri,
-            "mimeType": resource.mimeType.get("")
+            "mimeType": effectiveMimeType
           }
           if content.isText:
             contentObj["text"] = %content.text
           else:
-            contentObj["blob"] = %content.blob  # base64-encoded binary data
+            contentObj["blob"] = %content.blob
 
           let response = createResponse(request.id, %*{
             "contents": [contentObj]
@@ -923,14 +925,15 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         try:
           let content = server.resourceHandlers[params.uri](params.uri)
           let resource = server.resources[params.uri]
+          let effectiveMimeType = if not content.isText and content.mimeType.len > 0: content.mimeType else: resource.mimeType.get("")
           var contentObj = %*{
             "uri": params.uri,
-            "mimeType": resource.mimeType.get("")
+            "mimeType": effectiveMimeType
           }
           if content.isText:
             contentObj["text"] = %content.text
           else:
-            contentObj["blob"] = %content.blob  # base64-encoded binary data
+            contentObj["blob"] = %content.blob
 
           let response = createResponse(request.id, %*{
             "contents": [contentObj]

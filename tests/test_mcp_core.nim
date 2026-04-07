@@ -1,5 +1,5 @@
 import
-  std/[unittest, json, tables, strutils, options, sequtils],
+  std/[unittest, json, tables, strutils, options, sequtils, base64],
   mcport/mcp_core,
   ./test_helpers
 
@@ -387,3 +387,29 @@ suite "MCP Core - Server Not Initialized Guards":
     check result.isError
     check result.error.error.code == -32001
     check result.error.error.message.contains("Server not initialized")
+
+suite "MCP Core - Blob Resource Content":
+
+  setup:
+    let server = createAndInitializeTestServer()
+    registerBlobTestResource(server)
+
+  test "resources/read request with blob content":
+    let readRequest = makeResourceReadRequest(50, "blob://test-image")
+    let result = server.handleRequest(readRequest)
+
+    check not result.isError
+    let contents = result.response.result["contents"]
+    check contents.len == 1
+    check not contents[0].hasKey("text")
+    check contents[0].hasKey("blob")
+    check contents[0]["mimeType"].getStr() == "image/png"
+
+  test "blob content base64 round-trip":
+    let readRequest = makeResourceReadRequest(51, "blob://test-image")
+    let result = server.handleRequest(readRequest)
+
+    check not result.isError
+    let blobData = result.response.result["contents"][0]["blob"].getStr()
+    let decoded = decode(blobData)
+    check decoded == "\x89PNG\r\n\x1a\n"

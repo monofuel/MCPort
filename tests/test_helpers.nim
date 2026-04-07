@@ -1,5 +1,5 @@
 import
-  std/[json, options, strformat, osproc, random, times, httpclient, net, os],
+  std/[json, options, strformat, osproc, random, times, httpclient, net, os, base64],
   jsony,
   mcport/[mcp_core, mcp_server_http]
 
@@ -253,6 +253,22 @@ proc registerRichContentTestTool*(server: McpServer): void =
         )
 
   server.registerRichTool(richTool, richHandler)
+
+proc registerBlobTestResource*(server: McpServer, uri: string = "blob://test-image"): void =
+  ## Register a test resource that returns base64-encoded binary content.
+  let blobResource = McpResource(
+    uri: uri,
+    name: some("Test Blob Resource"),
+    description: some("A test resource returning binary blob content"),
+    mimeType: some("image/png")
+  )
+
+  proc blobHandler(uri: string): ResourceContent =
+    ## Return a small PNG header as base64-encoded blob content.
+    let bytes = "\x89PNG\r\n\x1a\n"
+    return blobResourceContent(encode(bytes), "image/png")
+
+  server.registerResource(blobResource, blobHandler)
 
 proc registerTestResourceTemplate*(server: McpServer): void =
   ## Register a test resource template.
