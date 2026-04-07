@@ -712,7 +712,6 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         )
 
       let params = request.params.toJson().fromJson(CallToolParams)
-      let progressToken = $request.id  # Use request ID as progress token
       if params.name in server.progressToolHandlers and server.progressReporter.isSome:
         # Use progress-enabled tool handler
         try:
@@ -896,7 +895,6 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         )
 
       let params = request.params.toJson().fromJson(ReadResourceParams)
-      let progressToken = $request.id  # Use request ID as progress token
       if params.uri in server.progressResourceHandlers and server.progressReporter.isSome:
         # Use progress-enabled resource handler
         try:
