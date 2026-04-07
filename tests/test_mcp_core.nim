@@ -502,3 +502,30 @@ suite "MCP Core - Handler Exception Propagation":
     check result.isError
     check result.error.error.code == -32603
     check result.error.error.message.contains("Resource read failed")
+
+suite "MCP Core - Unknown Method Handling":
+
+  setup:
+    let server = createAndInitializeTestServer()
+
+  test "unknown method returns -32601":
+    let request = makeJsonRequest(70, "nonexistent/method")
+    let result = server.handleRequest(request)
+
+    check result.isError
+    check result.error.error.code == -32601
+    check result.error.error.message == "Method not found"
+
+  test "legacy get_resource method returns -32601":
+    let request = makeJsonRequest(71, "get_resource")
+    let result = server.handleRequest(request)
+
+    check result.isError
+    check result.error.error.code == -32601
+
+  test "empty method string returns -32601":
+    let request = makeJsonRequest(72, "")
+    let result = server.handleRequest(request)
+
+    check result.isError
+    check result.error.error.code == -32601
