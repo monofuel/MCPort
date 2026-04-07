@@ -202,7 +202,7 @@ type
     of true:
       text*: string
     of false:
-      blob*: string  # base64-encoded binary data (TODO: implement)
+      blob*: string  # Base64-encoded binary data.
 
   ResourceHandler* = proc(uri: string): ResourceContent {.gcsafe.}
 
@@ -501,6 +501,14 @@ proc resourceLinkContent*(uri: string, name: Option[string] = none(string), desc
 proc embeddedResourceContent*(resource: JsonNode, annotations: Option[JsonNode] = none(JsonNode)): ToolContent =
   ## Create embedded resource content for tool results.
   ToolContent(kind: tctResource, embeddedResourceContent: EmbeddedResourceContent(`type`: "resource", resource: resource, annotations: annotations))
+
+proc textResourceContent*(text: string): ResourceContent =
+  ## Create text resource content.
+  ResourceContent(isText: true, text: text)
+
+proc blobResourceContent*(blob: string): ResourceContent =
+  ## Create blob resource content from base64-encoded data.
+  ResourceContent(isText: false, blob: blob)
 
 proc toolContentToJson*(content: ToolContent): JsonNode =
   ## Convert ToolContent to JsonNode for serialization.
