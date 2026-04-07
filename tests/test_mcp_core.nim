@@ -332,4 +332,58 @@ suite "MCP Core Tests":
     registerTestResource(server, "config://test-server-2", "Second Test Resource")
     let subscribeRequest2 = makeResourceSubscribeRequest(31, "config://test-server-2")
     let result2 = server.handleRequest(subscribeRequest2)
-    check not result2.isError 
+    check not result2.isError
+
+suite "MCP Core - Server Not Initialized Guards":
+
+  setup:
+    let server = createTestServer()
+    server.initialized = false
+
+  test "tools/list returns error when not initialized":
+    let result = server.handleRequest(makeToolsListRequest())
+    check result.isError
+    check result.error.error.code == -32001
+    check result.error.error.message.contains("Server not initialized")
+
+  test "tools/call returns error when not initialized":
+    let result = server.handleRequest(makeToolCallRequest(2, "secret_fetcher"))
+    check result.isError
+    check result.error.error.code == -32001
+    check result.error.error.message.contains("Server not initialized")
+
+  test "prompts/list returns error when not initialized":
+    let result = server.handleRequest(makePromptsListRequest())
+    check result.isError
+    check result.error.error.code == -32001
+    check result.error.error.message.contains("Server not initialized")
+
+  test "prompts/get returns error when not initialized":
+    let result = server.handleRequest(makePromptsGetRequest(3, "code_review", %*{"topic": "test"}))
+    check result.isError
+    check result.error.error.code == -32001
+    check result.error.error.message.contains("Server not initialized")
+
+  test "resources/list returns error when not initialized":
+    let result = server.handleRequest(makeResourcesListRequest())
+    check result.isError
+    check result.error.error.code == -32001
+    check result.error.error.message.contains("Server not initialized")
+
+  test "resources/read returns error when not initialized":
+    let result = server.handleRequest(makeResourceReadRequest(4, "config://test-server"))
+    check result.isError
+    check result.error.error.code == -32001
+    check result.error.error.message.contains("Server not initialized")
+
+  test "resources/templates/list returns error when not initialized":
+    let result = server.handleRequest(makeResourceTemplatesListRequest())
+    check result.isError
+    check result.error.error.code == -32001
+    check result.error.error.message.contains("Server not initialized")
+
+  test "resources/subscribe returns error when not initialized":
+    let result = server.handleRequest(makeResourceSubscribeRequest(5, "config://test-server"))
+    check result.isError
+    check result.error.error.code == -32001
+    check result.error.error.message.contains("Server not initialized")
