@@ -413,3 +413,92 @@ suite "MCP Core - Blob Resource Content":
     let blobData = result.response.result["contents"][0]["blob"].getStr()
     let decoded = decode(blobData)
     check decoded == "\x89PNG\r\n\x1a\n"
+
+suite "MCP Core - Handler Exception Propagation":
+
+  setup:
+    let server = createAndInitializeTestServer()
+
+  test "regular tool handler that raises returns -32603":
+    let failTool = McpTool(
+      name: "fail_tool",
+      description: "A tool that always raises",
+      inputSchema: %*{"type": "object", "properties": {}, "required": []}
+    )
+    proc failHandler(arguments: JsonNode): JsonNode =
+      raise newException(ValueError, "intentional failure")
+    server.registerTool(failTool, failHandler)
+
+    let result = server.handleRequest(makeToolCallRequest(60, "fail_tool"))
+
+    check result.isError
+    check result.error.error.code == -32603
+    check result.error.error.message.contains("Tool execution failed")
+
+  test "rich tool handler that raises returns -32603":
+    let failTool = McpTool(
+      name: "fail_rich_tool",
+      description: "A rich tool that always raises",
+      inputSchema: %*{"type": "object", "properties": {}, "required": []}
+    )
+    proc failRichHandler(arguments: JsonNode): ToolResult =
+      raise newException(ValueError, "intentional rich failure")
+    server.registerRichTool(failTool, failRichHandler)
+
+    let result = server.handleRequest(makeToolCallRequest(61, "fail_rich_tool"))
+
+    check result.isError
+    check result.error.error.code == -32603
+    check result.error.error.message.contains("Tool execution failed")
+
+  test "progress tool handler that raises returns -32603":
+    let failTool = McpTool(
+      name: "fail_progress_tool",
+      description: "A progress tool that always raises",
+      inputSchema: %*{"type": "object", "properties": {}, "required": []}
+    )
+    proc failProgressHandler(arguments: JsonNode, progressReporter: ProgressReporter): ToolResult =
+      raise newException(ValueError, "intentional progress failure")
+    server.registerProgressTool(failTool, failProgressHandler)
+    proc noopReporter(progressToken: ProgressToken, progress: Option[float], status: Option[string], total: Option[int], current: Option[int]) =
+      discard
+    server.setProgressReporter(noopReporter)
+
+    let result = server.handleRequest(makeToolCallRequest(62, "fail_progress_tool"))
+
+    check result.isError
+    check result.error.error.code == -32603
+    check result.error.error.message.contains("Tool execution failed")
+
+  test "prompt handler that raises returns -32603":
+    let failPrompt = McpPrompt(
+      name: "fail_prompt",
+      description: some("A prompt that always raises"),
+      arguments: @[]
+    )
+    proc failPromptHandler(arguments: JsonNode): seq[PromptMessage] =
+      raise newException(CatchableError, "intentional prompt failure")
+    server.registerPrompt(failPrompt, failPromptHandler)
+
+    let result = server.handleRequest(makePromptsGetRequest(63, "fail_prompt"))
+
+    check result.isError
+    check result.error.error.code == -32603
+    check result.error.error.message.contains("Prompt execution failed")
+
+  test "resource handler that raises returns -32603":
+    let failResource = McpResource(
+      uri: "fail://resource",
+      name: some("Fail Resource"),
+      description: some("A resource that always raises"),
+      mimeType: some("text/plain")
+    )
+    proc failResourceHandler(uri: string): ResourceContent =
+      raise newException(ValueError, "intentional resource failure")
+    server.registerResource(failResource, failResourceHandler)
+
+    let result = server.handleRequest(makeResourceReadRequest(64, "fail://resource"))
+
+    check result.isError
+    check result.error.error.code == -32603
+    check result.error.error.message.contains("Resource read failed")
