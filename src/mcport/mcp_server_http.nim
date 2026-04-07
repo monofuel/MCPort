@@ -65,26 +65,29 @@ proc handleJsonRpcRequest(httpServer: HttpMcpServer, request: Request) =
       request.respond(401, headers, "{\"error\":\"Unauthorized\"}")
       return
 
+    # Parse the body once to detect notifications (no 'id' field) before calling
+    # handleRequest, so we don't rely on the fragile %*{} sentinel value.
+    let parsedBody = request.body.parseJson()
+    let isNotification = not parsedBody.hasKey("id")
+
     # Handle the MCP JSON-RPC request using the core server
     httpServer.log("Received JSON-RPC request: " & request.body)
     let result = httpServer.server.handleRequest(request.body)
-    
+
     var headers: HttpHeaders
     headers["content-type"] = "application/json"
-    
+
     if result.isError:
       let errorJson = result.error.toJson()
       httpServer.log("Sent JSON-RPC error: " & errorJson)
       request.respond(200, headers, errorJson)  # JSON-RPC errors are still HTTP 200
+    elif isNotification:
+      httpServer.log("JSON-RPC notification processed, no response")
+      request.respond(204)  # No content for notifications
     else:
-      # Handle notifications that don't need responses (empty result object)
-      if result.response.result == %*{}:
-        httpServer.log("JSON-RPC notification processed, no response")
-        request.respond(204)  # No content for notifications
-      else:
-        let responseJson = result.response.toJson()
-        httpServer.log("Sent JSON-RPC response: " & responseJson)
-        request.respond(200, headers, responseJson)
+      let responseJson = result.response.toJson()
+      httpServer.log("Sent JSON-RPC response: " & responseJson)
+      request.respond(200, headers, responseJson)
     
   except Exception as e:
     httpServer.log("Error handling JSON-RPC request: " & e.msg)
