@@ -213,6 +213,48 @@ suite "MCP Client Core Tests":
     check "tool1" in toolNames
     check "tool2" in toolNames
 
+  test "prompts/list request":
+    let client = newMcpClient("TestClient", "1.0.0")
+    let req = client.createPromptsListRequest()
+    check req.jsonrpc == "2.0"
+    check req.`method` == "prompts/list"
+    check req.id > 0
+
+  test "prompts/get request":
+    let client = newMcpClient("TestClient", "1.0.0")
+    let req = client.createPromptsGetRequest("my-prompt", %*{"key": "val"})
+    check req.jsonrpc == "2.0"
+    check req.`method` == "prompts/get"
+    check req.params["name"].getStr() == "my-prompt"
+    check req.params["arguments"]["key"].getStr() == "val"
+
+  test "prompts/get request without arguments":
+    let client = newMcpClient("TestClient", "1.0.0")
+    let req = client.createPromptsGetRequest("bare-prompt")
+    check req.`method` == "prompts/get"
+    check req.params["name"].getStr() == "bare-prompt"
+
+  test "resources/list request":
+    let client = newMcpClient("TestClient", "1.0.0")
+    let req = client.createResourcesListRequest()
+    check req.jsonrpc == "2.0"
+    check req.`method` == "resources/list"
+    check req.id > 0
+
+  test "resources/read request":
+    let client = newMcpClient("TestClient", "1.0.0")
+    let req = client.createResourcesReadRequest("file:///path/to/res")
+    check req.jsonrpc == "2.0"
+    check req.`method` == "resources/read"
+    check req.params["uri"].getStr() == "file:///path/to/res"
+
+  test "resources/subscribe request":
+    let client = newMcpClient("TestClient", "1.0.0")
+    let req = client.createResourcesSubscribeRequest("file:///path/to/res")
+    check req.jsonrpc == "2.0"
+    check req.`method` == "resources/subscribe"
+    check req.params["uri"].getStr() == "file:///path/to/res"
+
   test "request ID increment":
     let client = newMcpClient("TestClient", "1.0.0")
 
@@ -222,6 +264,18 @@ suite "MCP Client Core Tests":
 
     check req2.id == req1.id + 1
     check req3.id == req2.id + 1
+
+  test "request ID increment across new builders":
+    let client = newMcpClient("TestClient", "1.0.0")
+    let r1 = client.createPromptsListRequest()
+    let r2 = client.createPromptsGetRequest("p")
+    let r3 = client.createResourcesListRequest()
+    let r4 = client.createResourcesReadRequest("x://y")
+    let r5 = client.createResourcesSubscribeRequest("x://y")
+    check r2.id == r1.id + 1
+    check r3.id == r2.id + 1
+    check r4.id == r3.id + 1
+    check r5.id == r4.id + 1
 
   test "malformed JSON response parsing":
     expect JsonParsingError:

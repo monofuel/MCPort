@@ -96,6 +96,33 @@ proc createToolCallRequest*(client: McpClient, toolName: string, arguments: Json
     "arguments": arguments
   })
 
+proc createPromptsListRequest*(client: McpClient): ClientRequest =
+  ## Create a prompts/list request.
+  client.createRequest("prompts/list", %*{})
+
+proc createPromptsGetRequest*(client: McpClient, name: string, arguments: JsonNode = %*{}): ClientRequest =
+  ## Create a prompts/get request.
+  client.createRequest("prompts/get", %*{
+    "name": name,
+    "arguments": arguments
+  })
+
+proc createResourcesListRequest*(client: McpClient): ClientRequest =
+  ## Create a resources/list request.
+  client.createRequest("resources/list", %*{})
+
+proc createResourcesReadRequest*(client: McpClient, uri: string): ClientRequest =
+  ## Create a resources/read request.
+  client.createRequest("resources/read", %*{
+    "uri": uri
+  })
+
+proc createResourcesSubscribeRequest*(client: McpClient, uri: string): ClientRequest =
+  ## Create a resources/subscribe request.
+  client.createRequest("resources/subscribe", %*{
+    "uri": uri
+  })
+
 proc parseResponse*(jsonResponse: string): ClientResult =
   ## Parse a JSON-RPC response string.
   let parsed = jsonResponse.parseJson()
