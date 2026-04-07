@@ -1,5 +1,5 @@
 import
-  std/[json, strformat, times, strutils, tables],
+  std/[json, locks, strformat, times, strutils, tables],
   jsony,
   mummy,
   mummy/routers,
@@ -14,6 +14,7 @@ type
     logEnabled*: bool
     authCb*: AuthCallback  ## Optional auth callback for HTTP requests
     notifications*: seq[JsonNode]  ## Queue of notifications for polling
+    notifLock*: Lock              ## Protects notifications from concurrent access
 
 proc log(httpServer: HttpMcpServer, msg: string) =
   ## Log a message with timestamp if logging is enabled.
@@ -23,7 +24,8 @@ proc log(httpServer: HttpMcpServer, msg: string) =
 
 proc httpNotificationCallback(httpServer: HttpMcpServer, notification: JsonNode) =
   ## Notification callback for HTTP transport - stores notifications in queue.
-  httpServer.notifications.add(notification)
+  withLock httpServer.notifLock:
+    httpServer.notifications.add(notification)
 
 proc checkAuth(httpServer: HttpMcpServer, request: Request): bool =
   ## Check authorization using the configured auth callback.
@@ -149,8 +151,10 @@ proc handleNotificationsRequest(httpServer: HttpMcpServer, request: Request) =
       return
 
     # Return all pending notifications and clear the queue
-    let notifications = httpServer.notifications
-    httpServer.notifications = @[]  # Clear the queue
+    var notifications: seq[JsonNode]
+    withLock httpServer.notifLock:
+      notifications = httpServer.notifications
+      httpServer.notifications = @[]
 
     let response = %*{"notifications": notifications}
     var headers: HttpHeaders
@@ -177,6 +181,7 @@ proc newHttpMcpServer*(mcpServer: McpServer, logEnabled: bool = true, authCb: Au
     authCb: finalAuthCb,
     notifications: @[]
   )
+  initLock(httpMcpServer.notifLock)
 
   # Set up notification callback for the MCP server
   mcpServer.setNotificationCallback(proc(notification: JsonNode) =
@@ -242,7 +247,8 @@ proc serve*(httpServer: HttpMcpServer, port: int, address: string = "localhost")
 
 proc clearNotifications*(httpServer: HttpMcpServer) =
   ## Clear all pending notifications (useful for testing).
-  httpServer.notifications = @[]
+  withLock httpServer.notifLock:
+    httpServer.notifications = @[]
 
 proc close*(httpServer: HttpMcpServer) =
   ## Close the HTTP MCP server.
