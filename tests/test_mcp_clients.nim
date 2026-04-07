@@ -2,6 +2,12 @@ import
   std/[unittest, tables, json, options, strutils],
   mcport/[mcp_client_core, mcp_core]
 
+var testNotifBuffer {.threadvar.}: seq[JsonNode]
+
+proc testNotifCallback(n: JsonNode) {.gcsafe.} =
+  ## Append notification to the module-level buffer.
+  testNotifBuffer.add(n)
+
 suite "MCP Client Core Tests":
   
   test "client creation":
@@ -306,6 +312,18 @@ suite "MCP Client Core Tests":
     let success = handleToolsListResponse(client, result)
     check success
     check client.availableTools.len == 0
+
+  test "setNotificationCallback registers callback":
+    let client = newMcpClient("TestClient", "1.0.0")
+    check client.notificationCallback.isNone
+
+    testNotifBuffer = @[]
+    client.setNotificationCallback(testNotifCallback)
+    check client.notificationCallback.isSome
+
+    client.notificationCallback.get()(%*{"method": "notifications/progress"})
+    check testNotifBuffer.len == 1
+    check testNotifBuffer[0]["method"].getStr() == "notifications/progress"
 
   test "tool call response with multiple content items":
     let multiContentResponse = """{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"First"},{"type":"text","text":"Second"}],"isError":false}}"""

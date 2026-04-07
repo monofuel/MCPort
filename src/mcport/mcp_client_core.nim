@@ -10,6 +10,7 @@ type
     serverInfo*: Option[ServerInfo]
     serverCapabilities*: Option[ServerCapabilities]
     availableTools*: Table[string, McpTool]
+    notificationCallback*: Option[NotificationCallback]
     nextRequestId: int
 
   ClientInfo* = object
@@ -47,9 +48,14 @@ proc newMcpClient*(name: string, version: string): McpClient =
     clientInfo: ClientInfo(name: name, version: version),
     serverInfo: none(ServerInfo),
     serverCapabilities: none(ServerCapabilities),
-    availableTools: initTable[string, McpTool]()
+    availableTools: initTable[string, McpTool](),
+    notificationCallback: none(NotificationCallback)
   )
   result.nextRequestId = 1
+
+proc setNotificationCallback*(client: McpClient, callback: NotificationCallback) =
+  ## Register a callback invoked when the server sends an unsolicited notification.
+  client.notificationCallback = some(callback)
 
 proc getNextRequestId(client: McpClient): int =
   ## Get the next request ID for JSON-RPC requests.

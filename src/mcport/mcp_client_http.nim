@@ -234,6 +234,11 @@ proc subscribeResource*(client: HttpMcpClient, uri: string): JsonNode =
     raise newException(CatchableError, fmt"Subscribe resource failed: {res.error.error.message}")
   return res.response.result
 
+# Note: Server-sent notifications are not supported by the HTTP client.
+# HTTP is a request/response protocol with no server-push mechanism, so the
+# server cannot send unsolicited notifications to the client.  If you need
+# live notification delivery, use the STDIO client instead.
+
 proc close*(client: HttpMcpClient) =
   ## Close the HTTP client connection.
   if client.connected:

@@ -1,5 +1,5 @@
 import
-  std/[json, strutils, strformat, osproc, streams],
+  std/[json, options, strutils, strformat, osproc, streams],
   jsony,
   ./[mcp_core, mcp_client_core]
 
@@ -61,14 +61,21 @@ proc readResponse(client: StdioMcpClient): string =
     raise newException(CatchableError, fmt"Failed to read response: {e.msg}")
 
 proc sendAndReceive(client: StdioMcpClient, request: ClientRequest): ClientResult =
-  ## Send a request and receive the response.
+  ## Send a request and receive the response, routing any interleaved server notifications.
   client.sendRequest(request)
-  
-  let responseStr = client.readResponse()
-  if responseStr == "":
-    raise newException(CatchableError, "Received empty response from server")
-  
-  return parseResponse(responseStr)
+
+  while true:
+    let responseStr = client.readResponse()
+    if responseStr == "":
+      raise newException(CatchableError, "Received empty response from server")
+
+    let parsed = responseStr.parseJson()
+    if not parsed.hasKey("id"):
+      # Server-sent notification (no id field) — route to callback and keep reading.
+      if client.client.notificationCallback.isSome:
+        client.client.notificationCallback.get()(parsed)
+    else:
+      return parseResponse(responseStr)
 
 proc initialize*(client: StdioMcpClient) =
   ## Initialize the connection with the server.
