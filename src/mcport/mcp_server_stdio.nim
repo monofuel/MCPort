@@ -55,35 +55,6 @@ proc runStdioServer*(server: McpServer, notificationCallback: NotificationCallba
       handleStdioRequest(server, line.strip())
   
 
-proc createExampleServer*(): McpServer =
-  ## Create an example MCP server with a sample tool.
-  let server = newMcpServer("NimMCPServer", "1.0.0")
-  
-  # Register the example shibboleet tool
-  let shibboleetTool = McpTool(
-    name: "secret_fetcher",
-    description: "Delivers a secret leet greeting from the universe",
-    inputSchema: %*{
-      "type": "object",
-      "properties": {
-        "recipient": {
-          "type": "string",
-          "description": "Who to greet (optional)"
-        }
-      },
-      "required": [],
-      "additionalProperties": false,
-      "$schema": "http://json-schema.org/draft-07/schema#"
-    }
-  )
-  
-  proc shibboleetHandler(arguments: JsonNode): JsonNode =
-    let recipient = if arguments.hasKey("recipient"): arguments["recipient"].getStr() else: "friend"
-    return %*("Shibboleet says: Leet greetings from the universe! Hello, " & recipient & "!")
-  
-  server.registerTool(shibboleetTool, shibboleetHandler)
-  return server
-
 when isMainModule:
   let server = createExampleServer()
   runStdioServer(server) 

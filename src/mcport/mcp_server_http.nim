@@ -261,32 +261,7 @@ proc close*(httpServer: HttpMcpServer) =
 
 proc createExampleHttpServer*(): HttpMcpServer =
   ## Create an example HTTP MCP server with a sample tool.
-  let mcpServer = newMcpServer("NimHTTPMCPServer", "1.0.0")
-  
-  # Register the example shibboleet tool
-  let shibboleetTool = McpTool(
-    name: "secret_fetcher",
-    description: "Delivers a secret leet greeting from the universe",
-    inputSchema: %*{
-      "type": "object",
-      "properties": {
-        "recipient": {
-          "type": "string",
-          "description": "Who to greet (optional)"
-        }
-      },
-      "required": [],
-      "additionalProperties": false,
-      "$schema": "http://json-schema.org/draft-07/schema#"
-    }
-  )
-  
-  proc shibboleetHandler(arguments: JsonNode): JsonNode =
-    let recipient = if arguments.hasKey("recipient"): arguments["recipient"].getStr() else: "friend"
-    return %*("Shibboleet says: Leet greetings from the universe! Hello, " & recipient & "!")
-  
-  mcpServer.registerTool(shibboleetTool, shibboleetHandler)
-  return newHttpMcpServer(mcpServer)
+  return newHttpMcpServer(createExampleServer("NimHTTPMCPServer"))
 
 when isMainModule:
   let server = createExampleHttpServer()

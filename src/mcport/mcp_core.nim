@@ -1010,3 +1010,31 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       isError: true,
       error: createError(0, -32700, "Invalid JSON")
     )
+
+proc createExampleServer*(name: string = "NimMCPServer"): McpServer =
+  ## Create an example MCP server with a sample tool.
+  let server = newMcpServer(name, "1.0.0")
+
+  let shibboleetTool = McpTool(
+    name: "secret_fetcher",
+    description: "Delivers a secret leet greeting from the universe",
+    inputSchema: %*{
+      "type": "object",
+      "properties": {
+        "recipient": {
+          "type": "string",
+          "description": "Who to greet (optional)"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  )
+
+  proc shibboleetHandler(arguments: JsonNode): JsonNode =
+    let recipient = if arguments.hasKey("recipient"): arguments["recipient"].getStr() else: "friend"
+    return %*("Shibboleet says: Leet greetings from the universe! Hello, " & recipient & "!")
+
+  server.registerTool(shibboleetTool, shibboleetHandler)
+  return server
