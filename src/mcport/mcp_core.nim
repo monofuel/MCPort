@@ -202,7 +202,8 @@ type
     of true:
       text*: string
     of false:
-      blob*: string  # base64-encoded binary data (TODO: implement)
+      blob*: string     # Base64-encoded binary data.
+      mimeType*: string # MIME type of the blob content.
 
   ResourceHandler* = proc(uri: string): ResourceContent {.gcsafe.}
 
@@ -502,6 +503,14 @@ proc embeddedResourceContent*(resource: JsonNode, annotations: Option[JsonNode] 
   ## Create embedded resource content for tool results.
   ToolContent(kind: tctResource, embeddedResourceContent: EmbeddedResourceContent(`type`: "resource", resource: resource, annotations: annotations))
 
+proc textResourceContent*(text: string): ResourceContent =
+  ## Create text resource content.
+  ResourceContent(isText: true, text: text)
+
+proc blobResourceContent*(blob: string, mimeType: string = ""): ResourceContent =
+  ## Create blob resource content from base64-encoded data.
+  ResourceContent(isText: false, blob: blob, mimeType: mimeType)
+
 proc toolContentToJson*(content: ToolContent): JsonNode =
   ## Convert ToolContent to JsonNode for serialization.
   case content.kind:
@@ -704,7 +713,6 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         )
 
       let params = request.params.toJson().fromJson(CallToolParams)
-      let progressToken = $request.id  # Use request ID as progress token
       if params.name in server.progressToolHandlers and server.progressReporter.isSome:
         # Use progress-enabled tool handler
         try:
@@ -888,20 +896,20 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         )
 
       let params = request.params.toJson().fromJson(ReadResourceParams)
-      let progressToken = $request.id  # Use request ID as progress token
       if params.uri in server.progressResourceHandlers and server.progressReporter.isSome:
         # Use progress-enabled resource handler
         try:
           let content = server.progressResourceHandlers[params.uri](params.uri, server.progressReporter.get())
           let resource = server.resources[params.uri]
+          let effectiveMimeType = if not content.isText and content.mimeType.len > 0: content.mimeType else: resource.mimeType.get("")
           var contentObj = %*{
             "uri": params.uri,
-            "mimeType": resource.mimeType.get("")
+            "mimeType": effectiveMimeType
           }
           if content.isText:
             contentObj["text"] = %content.text
           else:
-            contentObj["blob"] = %content.blob  # base64-encoded binary data
+            contentObj["blob"] = %content.blob
 
           let response = createResponse(request.id, %*{
             "contents": [contentObj]
@@ -917,14 +925,15 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         try:
           let content = server.resourceHandlers[params.uri](params.uri)
           let resource = server.resources[params.uri]
+          let effectiveMimeType = if not content.isText and content.mimeType.len > 0: content.mimeType else: resource.mimeType.get("")
           var contentObj = %*{
             "uri": params.uri,
-            "mimeType": resource.mimeType.get("")
+            "mimeType": effectiveMimeType
           }
           if content.isText:
             contentObj["text"] = %content.text
           else:
-            contentObj["blob"] = %content.blob  # base64-encoded binary data
+            contentObj["blob"] = %content.blob
 
           let response = createResponse(request.id, %*{
             "contents": [contentObj]
@@ -990,13 +999,6 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
           error: createError(request.id, -32002, "Resource not found", some(%*{"uri": params.uri}))
         )
 
-    of "get_resource":
-      # TODO do this! (legacy method, might be deprecated)
-      return McpResult(
-        isError: true,
-        error: createError(request.id, -32601, "get_resource method not implemented")
-      )
-
     else:
       return McpResult(
         isError: true,
@@ -1008,3 +1010,31 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       isError: true,
       error: createError(0, -32700, "Invalid JSON")
     )
+
+proc createExampleServer*(name: string = "NimMCPServer"): McpServer =
+  ## Create an example MCP server with a sample tool.
+  let server = newMcpServer(name, "1.0.0")
+
+  let shibboleetTool = McpTool(
+    name: "secret_fetcher",
+    description: "Delivers a secret leet greeting from the universe",
+    inputSchema: %*{
+      "type": "object",
+      "properties": {
+        "recipient": {
+          "type": "string",
+          "description": "Who to greet (optional)"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  )
+
+  proc shibboleetHandler(arguments: JsonNode): JsonNode =
+    let recipient = if arguments.hasKey("recipient"): arguments["recipient"].getStr() else: "friend"
+    return %*("Shibboleet says: Leet greetings from the universe! Hello, " & recipient & "!")
+
+  server.registerTool(shibboleetTool, shibboleetHandler)
+  return server

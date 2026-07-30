@@ -3,6 +3,11 @@ import
   mcport/[mcp_core, mcp_server_http],
   ./test_helpers
 
+# Helpers for notification detection tests
+proc parseHasId(body: string): bool =
+  ## Return true if the JSON body contains an 'id' field.
+  body.parseJson().hasKey("id")
+
 suite "HTTP Server Tests":
   
   test "create http server wrapper":
@@ -65,6 +70,27 @@ suite "HTTP Server Tests":
     check server.notificationCallback.isSome
     check httpServer.notifications.len == 0
 
+  test "resources/subscribe request is not treated as notification":
+    ## resources/subscribe returns %*{} as its result, which used to be the
+    ## same sentinel value used to indicate notifications (no response needed).
+    ## The fix detects notifications by checking the incoming request for 'id',
+    ## not by inspecting the result object.
+    let server = createAndInitializeTestServer()
+    registerTestResource(server, "test://subscribe-target", "Subscribe Target")
+
+    # A subscribe request always has an id - it is NOT a notification.
+    let subscribeBody = makeResourceSubscribeRequest(10, "test://subscribe-target")
+    check parseHasId(subscribeBody) == true
+
+    # handleRequest returns %*{} as the result - this is the ambiguous case.
+    let result = server.handleRequest(subscribeBody)
+    check not result.isError
+    check result.response.result == %*{}
+
+    # A bare notification (no id) should be detected correctly.
+    let notificationBody = """{"jsonrpc":"2.0","method":"notifications/initialized"}"""
+    check parseHasId(notificationBody) == false
+
 # Note: Integration tests with real HTTP servers are complex to implement in unit tests
 # For now, we focus on unit testing the core functionality
-# Integration testing can be done manually or in separate test suites 
+# Integration testing can be done manually or in separate test suites

@@ -1,5 +1,5 @@
 import
-  std/[json, strformat, times, strutils, tables],
+  std/[json, locks, strformat, times, strutils, tables],
   jsony,
   mummy,
   mummy/routers,
@@ -17,6 +17,7 @@ type
     logEnabled*: bool
     authCb*: AuthCallback  ## Optional auth callback for HTTP requests
     notifications*: seq[JsonNode]  ## Queue of notifications for polling
+    notifLock*: Lock              ## Protects notifications from concurrent access
 
 proc log(httpServer: HttpMcpServer, msg: string) =
   ## Log a message with timestamp if logging is enabled.
@@ -26,7 +27,8 @@ proc log(httpServer: HttpMcpServer, msg: string) =
 
 proc httpNotificationCallback(httpServer: HttpMcpServer, notification: JsonNode) =
   ## Notification callback for HTTP transport - stores notifications in queue.
-  httpServer.notifications.add(notification)
+  withLock httpServer.notifLock:
+    httpServer.notifications.add(notification)
 
 proc checkAuth(httpServer: HttpMcpServer, request: Request): bool =
   ## Check authorization using the configured auth callback.
@@ -66,26 +68,29 @@ proc handleJsonRpcRequest(httpServer: HttpMcpServer, request: Request) =
       request.respond(401, headers, "{\"error\":\"Unauthorized\"}")
       return
 
+    # Parse the body once to detect notifications (no 'id' field) before calling
+    # handleRequest, so we don't rely on the fragile %*{} sentinel value.
+    let parsedBody = request.body.parseJson()
+    let isNotification = not parsedBody.hasKey("id")
+
     # Handle the MCP JSON-RPC request using the core server
     httpServer.log("Received JSON-RPC request: " & request.body)
     let result = httpServer.server.handleRequest(request.body)
-    
+
     var headers: HttpHeaders
     headers["content-type"] = "application/json"
-    
+
     if result.isError:
       let errorJson = result.error.toJson()
       httpServer.log("Sent JSON-RPC error: " & errorJson)
       request.respond(200, headers, errorJson)  # JSON-RPC errors are still HTTP 200
+    elif isNotification:
+      httpServer.log("JSON-RPC notification processed, no response")
+      request.respond(204)  # No content for notifications
     else:
-      # Handle notifications that don't need responses (empty result object)
-      if result.response.result == %*{}:
-        httpServer.log("JSON-RPC notification processed, no response")
-        request.respond(204)  # No content for notifications
-      else:
-        let responseJson = result.response.toJson()
-        httpServer.log("Sent JSON-RPC response: " & responseJson)
-        request.respond(200, headers, responseJson)
+      let responseJson = result.response.toJson()
+      httpServer.log("Sent JSON-RPC response: " & responseJson)
+      request.respond(200, headers, responseJson)
     
   except Exception as e:
     httpServer.log("Error handling JSON-RPC request: " & e.msg)
@@ -152,8 +157,10 @@ proc handleNotificationsRequest(httpServer: HttpMcpServer, request: Request) =
       return
 
     # Return all pending notifications and clear the queue
-    let notifications = httpServer.notifications
-    httpServer.notifications = @[]  # Clear the queue
+    var notifications: seq[JsonNode]
+    withLock httpServer.notifLock:
+      notifications = httpServer.notifications
+      httpServer.notifications = @[]
 
     let response = %*{"notifications": notifications}
     var headers: HttpHeaders
@@ -187,6 +194,7 @@ proc newHttpMcpServer*(
     authCb: finalAuthCb,
     notifications: @[]
   )
+  initLock(httpMcpServer.notifLock)
 
   # Set up notification callback for the MCP server
   mcpServer.setNotificationCallback(proc(notification: JsonNode) =
@@ -256,7 +264,8 @@ proc serve*(httpServer: HttpMcpServer, port: int, address: string = "localhost")
 
 proc clearNotifications*(httpServer: HttpMcpServer) =
   ## Clear all pending notifications (useful for testing).
-  httpServer.notifications = @[]
+  withLock httpServer.notifLock:
+    httpServer.notifications = @[]
 
 proc close*(httpServer: HttpMcpServer) =
   ## Close the HTTP MCP server.
@@ -266,32 +275,7 @@ proc close*(httpServer: HttpMcpServer) =
 
 proc createExampleHttpServer*(): HttpMcpServer =
   ## Create an example HTTP MCP server with a sample tool.
-  let mcpServer = newMcpServer("NimHTTPMCPServer", "1.0.0")
-  
-  # Register the example shibboleet tool
-  let shibboleetTool = McpTool(
-    name: "secret_fetcher",
-    description: "Delivers a secret leet greeting from the universe",
-    inputSchema: %*{
-      "type": "object",
-      "properties": {
-        "recipient": {
-          "type": "string",
-          "description": "Who to greet (optional)"
-        }
-      },
-      "required": [],
-      "additionalProperties": false,
-      "$schema": "http://json-schema.org/draft-07/schema#"
-    }
-  )
-  
-  proc shibboleetHandler(arguments: JsonNode): JsonNode =
-    let recipient = if arguments.hasKey("recipient"): arguments["recipient"].getStr() else: "friend"
-    return %*("Shibboleet says: Leet greetings from the universe! Hello, " & recipient & "!")
-  
-  mcpServer.registerTool(shibboleetTool, shibboleetHandler)
-  return newHttpMcpServer(mcpServer)
+  return newHttpMcpServer(createExampleServer("NimHTTPMCPServer"))
 
 when isMainModule:
   let server = createExampleHttpServer()

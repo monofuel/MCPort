@@ -10,6 +10,7 @@ type
     serverInfo*: Option[ServerInfo]
     serverCapabilities*: Option[ServerCapabilities]
     availableTools*: Table[string, McpTool]
+    notificationCallback*: Option[NotificationCallback]
     nextRequestId: int
 
   ClientInfo* = object
@@ -47,9 +48,14 @@ proc newMcpClient*(name: string, version: string): McpClient =
     clientInfo: ClientInfo(name: name, version: version),
     serverInfo: none(ServerInfo),
     serverCapabilities: none(ServerCapabilities),
-    availableTools: initTable[string, McpTool]()
+    availableTools: initTable[string, McpTool](),
+    notificationCallback: none(NotificationCallback)
   )
   result.nextRequestId = 1
+
+proc setNotificationCallback*(client: McpClient, callback: NotificationCallback) =
+  ## Register a callback invoked when the server sends an unsolicited notification.
+  client.notificationCallback = some(callback)
 
 proc getNextRequestId(client: McpClient): int =
   ## Get the next request ID for JSON-RPC requests.
@@ -94,6 +100,33 @@ proc createToolCallRequest*(client: McpClient, toolName: string, arguments: Json
   client.createRequest("tools/call", %*{
     "name": toolName,
     "arguments": arguments
+  })
+
+proc createPromptsListRequest*(client: McpClient): ClientRequest =
+  ## Create a prompts/list request.
+  client.createRequest("prompts/list", %*{})
+
+proc createPromptsGetRequest*(client: McpClient, name: string, arguments: JsonNode = %*{}): ClientRequest =
+  ## Create a prompts/get request.
+  client.createRequest("prompts/get", %*{
+    "name": name,
+    "arguments": arguments
+  })
+
+proc createResourcesListRequest*(client: McpClient): ClientRequest =
+  ## Create a resources/list request.
+  client.createRequest("resources/list", %*{})
+
+proc createResourcesReadRequest*(client: McpClient, uri: string): ClientRequest =
+  ## Create a resources/read request.
+  client.createRequest("resources/read", %*{
+    "uri": uri
+  })
+
+proc createResourcesSubscribeRequest*(client: McpClient, uri: string): ClientRequest =
+  ## Create a resources/subscribe request.
+  client.createRequest("resources/subscribe", %*{
+    "uri": uri
   })
 
 proc parseResponse*(jsonResponse: string): ClientResult =

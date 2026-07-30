@@ -1,7 +1,13 @@
 import
-  std/[unittest, json, options, strutils, strformat, osproc, streams, os],
-  mcport/[mcp_client_stdio, mcp_core],
+  std/[unittest, json, options, strutils, strformat, osproc, streams, os, times],
+  mcport/[mcp_client_core, mcp_client_stdio, mcp_core],
   ./test_helpers
+
+var stdioNotifBuffer {.threadvar.}: seq[JsonNode]
+
+proc stdioNotifCallback(n: JsonNode) {.gcsafe.} =
+  ## Append notification to the module-level buffer.
+  stdioNotifBuffer.add(n)
 
 suite "STDIO Client Tests":
 
@@ -153,3 +159,54 @@ suite "STDIO Client Tests":
     # Verify cleanup happened
     check not client.isConnected()
     check client.process == nil
+
+  when not defined(windows):
+    test "notification callback is invoked for server-sent notifications":
+      # Script sends a progress notification before the tool-call response.
+      let script = "/tmp/test_notif_" & $getTime().toUnix() & ".sh"
+      writeFile(script,
+        "#!/bin/sh\n" &
+        "printf '{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progressToken\":\"tok1\",\"progress\":0.5}}\\n'\n" &
+        "read line\n" &
+        "printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"done\"}],\"isError\":false}}\\n'\n"
+      )
+      discard execShellCmd("chmod +x " & script)
+      defer: removeFile(script)
+
+      let client = newStdioMcpClient("TestClient", "1.0.0", logEnabled = false)
+      stdioNotifBuffer = @[]
+      client.client.setNotificationCallback(stdioNotifCallback)
+
+      client.connect(script)
+      client.client.initialized = true  # bypass the handshake
+      defer: client.close()
+
+      let result = client.callTool("anything")
+
+      check stdioNotifBuffer.len == 1
+      check stdioNotifBuffer[0]["method"].getStr() == "notifications/progress"
+      check stdioNotifBuffer[0]["params"]["progressToken"].getStr() == "tok1"
+      check result["content"][0]["text"].getStr() == "done"
+
+    test "notification without callback is silently discarded":
+      # Script sends a notification with no callback registered.
+      let script = "/tmp/test_notif_nodiscard_" & $getTime().toUnix() & ".sh"
+      writeFile(script,
+        "#!/bin/sh\n" &
+        "printf '{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progressToken\":\"tok2\"}}\\n'\n" &
+        "read line\n" &
+        "printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"isError\":false}}\\n'\n"
+      )
+      discard execShellCmd("chmod +x " & script)
+      defer: removeFile(script)
+
+      let client = newStdioMcpClient("TestClient", "1.0.0", logEnabled = false)
+      # No callback registered.
+
+      client.connect(script)
+      client.client.initialized = true
+      defer: client.close()
+
+      # Should not raise despite the interleaved notification.
+      let result = client.callTool("anything")
+      check result["content"][0]["text"].getStr() == "ok"

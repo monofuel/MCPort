@@ -1,5 +1,5 @@
 import
-  std/[json, strutils, strformat, osproc, streams],
+  std/[json, options, strutils, strformat, osproc, streams],
   jsony,
   ./[mcp_core, mcp_client_core]
 
@@ -61,14 +61,21 @@ proc readResponse(client: StdioMcpClient): string =
     raise newException(CatchableError, fmt"Failed to read response: {e.msg}")
 
 proc sendAndReceive(client: StdioMcpClient, request: ClientRequest): ClientResult =
-  ## Send a request and receive the response.
+  ## Send a request and receive the response, routing any interleaved server notifications.
   client.sendRequest(request)
-  
-  let responseStr = client.readResponse()
-  if responseStr == "":
-    raise newException(CatchableError, "Received empty response from server")
-  
-  return parseResponse(responseStr)
+
+  while true:
+    let responseStr = client.readResponse()
+    if responseStr == "":
+      raise newException(CatchableError, "Received empty response from server")
+
+    let parsed = responseStr.parseJson()
+    if not parsed.hasKey("id"):
+      # Server-sent notification (no id field) — route to callback and keep reading.
+      if client.client.notificationCallback.isSome:
+        client.client.notificationCallback.get()(parsed)
+    else:
+      return parseResponse(responseStr)
 
 proc initialize*(client: StdioMcpClient) =
   ## Initialize the connection with the server.
@@ -161,6 +168,66 @@ proc getAvailableTools*(client: StdioMcpClient): seq[string] =
         toolNames.add(tool["name"].getStr())
   
   return toolNames
+
+proc listPrompts*(client: StdioMcpClient): JsonNode =
+  ## List available prompts from the server.
+  if not client.isConnected():
+    raise newException(CatchableError, "Client not connected to server")
+  if not client.client.initialized:
+    raise newException(CatchableError, "Client not initialized")
+  let req = client.client.createPromptsListRequest()
+  let res = client.sendAndReceive(req)
+  if res.isError:
+    raise newException(CatchableError, fmt"List prompts failed: {res.error.error.message}")
+  return res.response.result
+
+proc getPrompt*(client: StdioMcpClient, name: string, arguments: JsonNode = %*{}): JsonNode =
+  ## Get a prompt by name from the server.
+  if not client.isConnected():
+    raise newException(CatchableError, "Client not connected to server")
+  if not client.client.initialized:
+    raise newException(CatchableError, "Client not initialized")
+  let req = client.client.createPromptsGetRequest(name, arguments)
+  let res = client.sendAndReceive(req)
+  if res.isError:
+    raise newException(CatchableError, fmt"Get prompt failed: {res.error.error.message}")
+  return res.response.result
+
+proc listResources*(client: StdioMcpClient): JsonNode =
+  ## List available resources from the server.
+  if not client.isConnected():
+    raise newException(CatchableError, "Client not connected to server")
+  if not client.client.initialized:
+    raise newException(CatchableError, "Client not initialized")
+  let req = client.client.createResourcesListRequest()
+  let res = client.sendAndReceive(req)
+  if res.isError:
+    raise newException(CatchableError, fmt"List resources failed: {res.error.error.message}")
+  return res.response.result
+
+proc readResource*(client: StdioMcpClient, uri: string): JsonNode =
+  ## Read a resource by URI from the server.
+  if not client.isConnected():
+    raise newException(CatchableError, "Client not connected to server")
+  if not client.client.initialized:
+    raise newException(CatchableError, "Client not initialized")
+  let req = client.client.createResourcesReadRequest(uri)
+  let res = client.sendAndReceive(req)
+  if res.isError:
+    raise newException(CatchableError, fmt"Read resource failed: {res.error.error.message}")
+  return res.response.result
+
+proc subscribeResource*(client: StdioMcpClient, uri: string): JsonNode =
+  ## Subscribe to a resource by URI on the server.
+  if not client.isConnected():
+    raise newException(CatchableError, "Client not connected to server")
+  if not client.client.initialized:
+    raise newException(CatchableError, "Client not initialized")
+  let req = client.client.createResourcesSubscribeRequest(uri)
+  let res = client.sendAndReceive(req)
+  if res.isError:
+    raise newException(CatchableError, fmt"Subscribe resource failed: {res.error.error.message}")
+  return res.response.result
 
 proc close*(client: StdioMcpClient) =
   ## Close the connection to the server.
