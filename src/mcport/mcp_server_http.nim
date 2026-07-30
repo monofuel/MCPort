@@ -7,6 +7,9 @@ import
 
 type
   AuthCallback* = proc(request: Request): bool {.gcsafe.}
+  ## Register extra routes on the HTTP router *before* the MCP catch-all.
+  ## Used by hosts that serve a dashboard (or other GETs) next to /mcp.
+  ExtraRoutesCallback* = proc(router: var Router) {.gcsafe.}
 
   HttpMcpServer* = ref object
     server*: McpServer
@@ -164,8 +167,15 @@ proc handleNotificationsRequest(httpServer: HttpMcpServer, request: Request) =
     httpServer.log("Error handling notifications request: " & e.msg)
     request.respond(500, body = "Error retrieving notifications")
 
-proc newHttpMcpServer*(mcpServer: McpServer, logEnabled: bool = true, authCb: AuthCallback = nil): HttpMcpServer =
+proc newHttpMcpServer*(
+    mcpServer: McpServer,
+    logEnabled: bool = true,
+    authCb: AuthCallback = nil,
+    registerExtra: ExtraRoutesCallback = nil
+): HttpMcpServer =
   ## Create a new HTTP MCP server wrapper.
+  ## Optional registerExtra adds host routes (e.g. a dashboard) before the
+  ## catch-all 404 handlers so they do not steal /mcp.
 
   # Default to always-authorized if no auth callback provided
   let finalAuthCb = if authCb != nil: authCb else:
@@ -212,7 +222,7 @@ proc newHttpMcpServer*(mcpServer: McpServer, logEnabled: bool = true, authCb: Au
   proc invalidRouteHandler(request: Request) {.gcsafe.} =
     loggingMiddleware(request)
     httpMcpServer.log(&"Invalid route accessed: {request.uri}")
-    request.respond(404, body = "Not found - valid endpoints: /mcp, /server-info, /notifications")
+    request.respond(404, body = "Not found - valid endpoints: /mcp, /server-info, /notifications, /")
   
   # main MCP endpoint!
   router.post("/mcp", mcpHandler)
@@ -223,6 +233,10 @@ proc newHttpMcpServer*(mcpServer: McpServer, logEnabled: bool = true, authCb: Au
 
   # notifications polling endpoint
   router.get("/notifications", notificationsHandler)
+
+  # Host-provided routes (dashboard, health pages, …) before the catch-all.
+  if registerExtra != nil:
+    registerExtra(router)
 
   # Add catch-all routes for invalid endpoints
   router.get("/*", invalidRouteHandler)
