@@ -8,7 +8,7 @@ const
 type
   RpcRequest* = object
     jsonrpc*: string
-    id*: int
+    id*: JsonNode
     `method`*: string
     params*: JsonNode
 
@@ -18,12 +18,12 @@ type
 
   RpcResponse* = object
     jsonrpc*: string
-    id*: int
+    id*: JsonNode
     result*: JsonNode
 
   RpcError* = object
     jsonrpc*: string
-    id*: int
+    id*: JsonNode
     error*: ErrorDetail
 
   ErrorDetail* = object
@@ -83,6 +83,7 @@ type
 
   McpServer* = ref object
     initialized*: bool
+    toolsOnly*: bool
     serverInfo*: ServerInfo
     capabilities*: ServerCapabilities
     toolListVersion*: int
@@ -467,7 +468,7 @@ proc registerResourceTemplate*(server: McpServer, resourceTemplate: McpResourceT
   ## Register a resource template with the MCP server.
   server.resourceTemplates[resourceTemplate.uriTemplate] = resourceTemplate
 
-proc createError*(id: int, code: int, message: string, data: Option[JsonNode] = none(JsonNode)): RpcError =
+proc createError*(id: JsonNode, code: int, message: string, data: Option[JsonNode] = none(JsonNode)): RpcError =
   ## Create an RPC error response.
   RpcError(
     jsonrpc: "2.0",
@@ -475,13 +476,25 @@ proc createError*(id: int, code: int, message: string, data: Option[JsonNode] = 
     error: ErrorDetail(code: code, message: message, data: data)
   )
 
-proc createResponse*(id: int, data: JsonNode): RpcResponse =
+proc createResponse*(id: JsonNode, data: JsonNode): RpcResponse =
   ## Create an RPC success response.
   RpcResponse(
     jsonrpc: "2.0",
     id: id,
     result: data
   )
+
+proc createError*(id: int, code: int, message: string, data: Option[JsonNode] = none(JsonNode)): RpcError =
+  ## Preserve integer request construction for existing callers.
+  createError(%id, code, message, data)
+
+proc createResponse*(id: int, data: JsonNode): RpcResponse =
+  ## Preserve integer request construction for existing callers.
+  createResponse(%id, data)
+
+proc `==`*(id: JsonNode, value: int): bool =
+  ## Compare a numeric RPC ID with existing integer callers.
+  id != nil and id.kind == JInt and id.getInt == value
 
 proc textContent*(text: string): ToolContent =
   ## Create text content for tool results.
@@ -637,6 +650,8 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       return McpResult(isError: false, response: createResponse(0, %*{}))
 
     # This is a request (has 'id' field) - parse as RpcRequest
+    if parsed.kind != JObject or parsed["id"].kind notin {JString, JInt}:
+      return McpResult(isError: true, error: createError(newJNull(), -32600, "Invalid request ID"))
     let request = line.fromJson(RpcRequest)
     if request.jsonrpc != "2.0":
       return McpResult(
@@ -645,6 +660,8 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       )
 
     case request.`method`
+    of "ping":
+      return McpResult(isError: false, response: createResponse(request.id, %*{}))
     of "initialize":
       # NB. some clients seem to send initialize requests multiple times.
       # if server.initialized:
@@ -674,6 +691,8 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
           "version": server.serverInfo.version
         }
       })
+      if server.toolsOnly:
+        response.result["capabilities"] = %*{"tools": {"listChanged": false}}
       server.initialized = true
       return McpResult(isError: false, response: response)
 

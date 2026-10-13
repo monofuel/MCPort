@@ -139,7 +139,8 @@ proc parseResponse*(jsonResponse: string): ClientResult =
     return ClientResult(isError: true, error: errorResponse)
   else:
     # This is a success response
-    let response = jsonResponse.fromJson(RpcResponse)
+    var response = jsonResponse.fromJson(RpcResponse)
+    if response.id == nil: response.id = %0
     return ClientResult(isError: false, response: response)
 
 proc handleInitializeResponse*(client: McpClient, response: ClientResult): bool =
