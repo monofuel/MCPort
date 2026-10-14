@@ -115,11 +115,11 @@ let callReq = client.createToolCallRequest("greet", %*{"name": "World"})
 - Prompts: register, list (with pagination), get (text/image/audio/embedded resources + annotations)
 - Resources: register, list (with pagination), read (text + blob content), templates, subscriptions, notifications
 - Progress tracking: notifications for long-running operations
-- Transports: STDIO, HTTP
+- Transports: STDIO, HTTP, WebSocket
 
 **Client:**
 - Tools: list, call
-- Transports: STDIO, HTTP
+- Transports: STDIO, HTTP, WebSocket
 
 
 ## Examples
@@ -132,7 +132,12 @@ nim c -r examples/simple_server.nim http    # HTTP server on port 8080
 ## Testing
 
 ```bash
-nimble test
+cd ..
+nimby create
+cd MCPort
+nimby sync nimby.lock
+make check
+make test
 ```
 
 ## Warnings
@@ -140,3 +145,17 @@ nimble test
 - ⚠️ Client code not extensively tested
 - ⚠️ Server logs everything to console including sensitive data
 - ⚠️ HTTP has no TLS - use reverse proxy for production
+
+## Notification subscriptions and experimental events
+
+Opt-in modern protocol support provides notification subscriptions and
+experimental events. Use WebSocket or stdio for push delivery, or HTTP for event
+polling. MCPort uses blocking clients and threads; SSE is not supported.
+
+Version 1.2.0 uses [monofuel's Whisky fork](https://github.com/monofuel/whisky),
+pinned to a tested commit in `nimby.lock`, while the fixes are under upstream
+review. WebSocket clients accept an optional `maxMessageBytes` limit; the default
+is unlimited.
+
+See [the notification and event guide](docs/notifications-events.md) for protocol
+selection, APIs, transport compatibility, and runnable examples.

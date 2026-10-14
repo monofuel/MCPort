@@ -15,7 +15,7 @@ proc runHttpFixture*(port: int) =
       request.respond(401)
       return
     if request.headers["Authorization"] != "Bearer " & FixtureToken or
-        not request.headers["Accept"].contains("text/event-stream"):
+        not request.headers["Accept"].contains("application/json"):
       request.respond(400, body = "Missing required headers")
       return
     let

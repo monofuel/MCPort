@@ -1,13 +1,12 @@
-.PHONY: test integration-test e2e-test build
+.PHONY: check test integration-test e2e-test build
+
+check build:
+	nim check src/mcport.nim
 
 test:
-	@echo "no tests configured"
+	@set -e; for test in $(sort $(wildcard tests/test_*.nim)); do nim r "$$test"; done
 
 integration-test:
-	@echo "no integration tests configured"
+	nim r tests/test_push_transports.nim
 
-e2e-test:
-	@echo "no e2e tests configured"
-
-build:
-	@echo "no build configured"
+e2e-test: integration-test

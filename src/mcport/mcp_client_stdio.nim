@@ -1,7 +1,9 @@
 import
-  std/[json, options, strutils, strformat, osproc, streams],
+  std/[json, locks, options, strutils, strformat, osproc, streams],
   jsony,
-  ./[mcp_core, mcp_client_core]
+  ./[mcp_core, mcp_client_core, mcp_client_runtime]
+
+export mcp_client_runtime
 
 type
   StdioMcpClient* = ref object
@@ -9,22 +11,55 @@ type
     process*: Process
     inputStream*: Stream
     outputStream*: Stream
+    errorStream: Stream
     logEnabled*: bool
+    inbox: ClientInbox
+    reader: Thread[pointer]
+    errorReader: Thread[pointer]
+    writeLock: Lock
+    reading: bool
 
 proc log(client: StdioMcpClient, msg: string) =
   ## Log a message if logging is enabled.
   if client.logEnabled:
     echo fmt"[STDIO Client] {msg}"
 
-proc newStdioMcpClient*(name: string, version: string, logEnabled: bool = true): StdioMcpClient =
+proc newStdioMcpClient*(name: string, version: string, logEnabled: bool = true, modernProtocol = false, queueCapacity = DefaultSubscriptionQueueCapacity): StdioMcpClient =
   ## Create a new STDIO MCP client.
-  StdioMcpClient(
-    client: newMcpClient(name, version),
-    logEnabled: logEnabled
+  result = StdioMcpClient(
+    client: newMcpClient(name, version, modernProtocol),
+    logEnabled: logEnabled, inbox: newClientInbox(queueCapacity)
   )
+  initLock(result.writeLock)
+
+proc stdioReader(data: pointer) {.thread.} =
+  {.cast(gcsafe).}:
+    let client {.cursor.} = cast[StdioMcpClient](data)
+    try:
+      while true:
+        let line = client.inputStream.readLine()
+        if line.len == 0:
+          client.inbox.disconnect()
+          break
+        let message = parseJson(line)
+        if not client.inbox.route(message):
+          client.inbox.bufferNotification(message)
+    except CatchableError as error:
+      client.inbox.disconnect(error.msg)
+
+proc stderrReader(data: pointer) {.thread.} =
+  {.cast(gcsafe).}:
+    let client {.cursor.} = cast[StdioMcpClient](data)
+    let stream {.cursor.} = client.errorStream
+    while not stream.atEnd:
+      let line = stream.readLine()
+      if client.logEnabled:
+        stderr.writeLine(line)
 
 proc connect*(client: StdioMcpClient, command: string, args: seq[string] = @[]) =
   ## Connect to an MCP server by launching a process.
+  if client.reading:
+    raise newException(ValueError, "Client already started; construct a new client to reconnect")
   let argsStr = args.join(" ")
   client.log(fmt"Launching server: {command} {argsStr}")
   
@@ -32,6 +67,10 @@ proc connect*(client: StdioMcpClient, command: string, args: seq[string] = @[]) 
     client.process = startProcess(command, args = args, options = {poUsePath})
     client.inputStream = client.process.outputStream
     client.outputStream = client.process.inputStream
+    client.errorStream = client.process.errorStream
+    client.reading = true
+    createThread(client.reader, stdioReader, cast[pointer](client))
+    createThread(client.errorReader, stderrReader, cast[pointer](client))
   except Exception as e:
     raise newException(CatchableError, fmt"Failed to start MCP server process: {e.msg}")
 
@@ -45,43 +84,27 @@ proc sendRequest(client: StdioMcpClient, request: ClientRequest | ClientNotifica
   client.log(fmt"Sending: {jsonRequest}")
   
   try:
-    client.outputStream.writeLine(jsonRequest)
-    client.outputStream.flush()
+    withLock client.writeLock:
+      client.outputStream.writeLine(jsonRequest)
+      client.outputStream.flush()
   except Exception as e:
     raise newException(CatchableError, fmt"Failed to send request: {e.msg}")
 
-proc readResponse(client: StdioMcpClient): string =
-  ## Read a JSON-RPC response from the server.
-  try:
-    let response = client.inputStream.readLine()
-    client.log(fmt"Received: {response}")
-    return response
-  except Exception as e:
-    client.log(fmt"Failed to read response: {e.msg}")
-    raise newException(CatchableError, fmt"Failed to read response: {e.msg}")
-
 proc sendAndReceive(client: StdioMcpClient, request: ClientRequest): ClientResult =
-  ## Send a request and receive the response, routing any interleaved server notifications.
   client.sendRequest(request)
-
-  while true:
-    let responseStr = client.readResponse()
-    if responseStr == "":
-      raise newException(CatchableError, "Received empty response from server")
-
-    let parsed = responseStr.parseJson()
-    if not parsed.hasKey("id"):
-      # Server-sent notification (no id field) — route to callback and keep reading.
-      if client.client.notificationCallback.isSome:
-        client.client.notificationCallback.get()(parsed)
-    else:
-      return parseResponse(responseStr)
+  let response = client.inbox.waitResponse(%request.id)
+  client.inbox.dispatchNotifications(client.client.notificationCallback)
+  parseResponse($response)
 
 proc initialize*(client: StdioMcpClient) =
   ## Initialize the connection with the server.
   if not client.isConnected():
     raise newException(CatchableError, "Client not connected to server")
 
+  if client.client.modernProtocol:
+    let response = client.sendAndReceive(client.client.createRequest("server/discover", %*{}))
+    client.client.handleDiscoveryResponse(response)
+    return
   client.log("Initializing connection...")
 
   # Send initialize request
@@ -235,14 +258,19 @@ proc close*(client: StdioMcpClient) =
   ## Close the connection to the server.
   if client.process != nil:
     client.log("Closing connection...")
+    client.process.terminate()
+    if client.reading:
+      joinThread(client.reader)
+      joinThread(client.errorReader)
+      client.reading = false
     if client.inputStream != nil:
       client.inputStream.close()
     if client.outputStream != nil:
       client.outputStream.close()
-    client.process.terminate()
     discard client.process.waitForExit(timeout = 1000)  # Wait 1 second
     client.process.close()
     
+    client.inbox.closeInbox()
     client.process = nil
     client.inputStream = nil
     client.outputStream = nil
@@ -263,3 +291,21 @@ proc connectAndInitialize*(client: StdioMcpClient, command: string, args: seq[st
 proc createExampleStdioClient*(): StdioMcpClient =
   ## Create an example STDIO client for testing.
   newStdioMcpClient("TestStdioClient", "1.0.0") 
+
+proc request*(client: StdioMcpClient, methodName: string, params: JsonNode = %*{}): JsonNode =
+  let response = client.sendAndReceive(client.client.createRequest(methodName, params))
+  if response.isError:
+    raise newException(IOError, response.error.error.message)
+  response.response.result
+
+proc openSubscription*(client: StdioMcpClient, methodName: string, params: JsonNode): Subscription =
+  let req = client.client.createRequest(methodName, params)
+  result = client.inbox.registerSubscription(%req.id, proc(id: JsonNode) =
+    client.sendRequest(ClientNotification(jsonrpc: "2.0", `method`: "notifications/cancelled",
+      params: %*{"requestId": id})))
+  client.sendRequest(req)
+  try:
+    result.waitAcknowledged()
+  except CatchableError:
+    result.close()
+    raise

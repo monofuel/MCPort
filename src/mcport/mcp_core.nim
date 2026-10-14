@@ -41,6 +41,10 @@ type
     prompts*: PromptCaps
     resources*: ResourceCaps
     progress*: bool
+    events*: Option[EventCaps]
+
+  EventCaps* = object
+    listChanged*: bool
 
   ToolCaps* = object
     listChanged*: bool
@@ -82,6 +86,9 @@ type
   ProgressToolHandler* = proc(arguments: JsonNode, progressReporter: ProgressReporter): ToolResult {.gcsafe.}
 
   McpServer* = ref object
+    extensionState*: RootRef
+    requestInterceptor*: proc(message: JsonNode, context: RequestContext): Option[McpResult] {.gcsafe.}
+    notificationSinks*: seq[NotificationCallback]
     initialized*: bool
     toolsOnly*: bool
     serverInfo*: ServerInfo
@@ -236,11 +243,40 @@ type
     status*: Option[string]   # Status message
 
   McpResult* = object
+    deferred*: bool
     case isError*: bool
     of true:
       error*: RpcError
     of false:
       response*: RpcResponse
+
+  McpTransport* = enum
+    LocalTransport, HttpTransport, StdioTransport, WebSocketTransport
+
+  RequestContext* = object
+    transport*: McpTransport
+    connectionId*: string
+    auth*: JsonNode
+    metadata*: JsonNode
+    send*: NotificationCallback
+    sender*: proc(target: pointer, message: JsonNode) {.nimcall, gcsafe.}
+    sendTarget*: pointer
+
+proc sendContextMessage*(context: RequestContext, message: JsonNode) =
+  if context.sender != nil:
+    context.sender(context.sendTarget, message)
+  elif context.send != nil:
+    context.send(message)
+  else:
+    raise newException(ValueError, "Request context has no sender")
+
+proc publishNotification*(server: McpServer, notification: JsonNode) =
+  for sink in server.notificationSinks:
+    sink(notification)
+  if server.notificationCallback.isSome and
+      (notification{"method"}.getStr() != "notifications/resources/updated" or
+        notification{"params", "uri"}.getStr() in server.resourceSubscriptions):
+    server.notificationCallback.get()(notification)
 
 proc newMcpServer*(name: string, version: string): McpServer =
   ## Create a new MCP server instance.
@@ -279,8 +315,8 @@ proc registerTool*(server: McpServer, tool: McpTool, handler: ToolHandler) =
   server.toolHandlers[tool.name] = handler
   inc server.toolListVersion
   # Notify that tools list has changed
-  if server.notificationCallback.isSome:
-    server.notificationCallback.get()(%*{
+  if server.notificationCallback.isSome or server.notificationSinks.len > 0:
+    server.publishNotification(%*{
       "jsonrpc": "2.0",
       "method": "notifications/tools/list_changed"
     })
@@ -291,8 +327,8 @@ proc registerRichTool*(server: McpServer, tool: McpTool, handler: RichToolHandle
   server.richToolHandlers[tool.name] = handler
   inc server.toolListVersion
   # Notify that tools list has changed
-  if server.notificationCallback.isSome:
-    server.notificationCallback.get()(%*{
+  if server.notificationCallback.isSome or server.notificationSinks.len > 0:
+    server.publishNotification(%*{
       "jsonrpc": "2.0",
       "method": "notifications/tools/list_changed"
     })
@@ -303,8 +339,8 @@ proc registerProgressTool*(server: McpServer, tool: McpTool, handler: ProgressTo
   server.progressToolHandlers[tool.name] = handler
   inc server.toolListVersion
   # Notify that tools list has changed
-  if server.notificationCallback.isSome:
-    server.notificationCallback.get()(%*{
+  if server.notificationCallback.isSome or server.notificationSinks.len > 0:
+    server.publishNotification(%*{
       "jsonrpc": "2.0",
       "method": "notifications/tools/list_changed"
     })
@@ -324,8 +360,8 @@ proc unregisterTool*(server: McpServer, toolName: string) =
     server.progressToolHandlers.del(toolName)
 
   inc server.toolListVersion
-  if server.notificationCallback.isSome:
-    server.notificationCallback.get()(%*{
+  if server.notificationCallback.isSome or server.notificationSinks.len > 0:
+    server.publishNotification(%*{
       "jsonrpc": "2.0",
       "method": "notifications/tools/list_changed"
     })
@@ -356,24 +392,24 @@ proc reportProgress*(
 
 proc notifyToolsListChanged*(server: McpServer) =
   ## Send a tools list changed notification.
-  if server.notificationCallback.isSome:
-    server.notificationCallback.get()(%*{
+  if server.notificationCallback.isSome or server.notificationSinks.len > 0:
+    server.publishNotification(%*{
       "jsonrpc": "2.0",
       "method": "notifications/tools/list_changed"
     })
 
 proc notifyPromptsListChanged*(server: McpServer) =
   ## Send a prompts list changed notification.
-  if server.notificationCallback.isSome:
-    server.notificationCallback.get()(%*{
+  if server.notificationCallback.isSome or server.notificationSinks.len > 0:
+    server.publishNotification(%*{
       "jsonrpc": "2.0",
       "method": "notifications/prompts/list_changed"
     })
 
 proc notifyResourceUpdated*(server: McpServer, uri: string) =
   ## Send a resource updated notification for subscribed resources.
-  if server.resourceSubscriptions.contains(uri) and server.notificationCallback.isSome:
-    server.notificationCallback.get()(%*{
+  if server.resourceSubscriptions.contains(uri) or server.notificationSinks.len > 0:
+    server.publishNotification(%*{
       "jsonrpc": "2.0",
       "method": "notifications/resources/updated",
       "params": {
@@ -390,7 +426,7 @@ proc notifyProgress*(
   current: Option[int] = none(int)
 ) =
   ## Send a progress notification.
-  if server.notificationCallback.isSome:
+  if server.notificationCallback.isSome or server.notificationSinks.len > 0:
     # Validate progress value if provided
     if progress.isSome and (progress.get < 0.0 or progress.get > 1.0):
       # Invalid progress value, skip notification
@@ -409,7 +445,7 @@ proc notifyProgress*(
     if current.isSome:
       params["current"] = %current.get
 
-    server.notificationCallback.get()(%*{
+    server.publishNotification(%*{
       "jsonrpc": "2.0",
       "method": "notifications/progress",
       "params": params
@@ -418,7 +454,7 @@ proc notifyProgress*(
 proc enableProgressNotifications*(server: McpServer) =
   ## Enable progress notifications by setting up a default progress reporter.
   ## This reporter will send progress notifications via the notification callback.
-  if server.notificationCallback.isSome:
+  if server.notificationCallback.isSome or server.notificationSinks.len > 0:
     let reporter = proc(
       progressToken: ProgressToken,
       progress: Option[float],
@@ -431,8 +467,8 @@ proc enableProgressNotifications*(server: McpServer) =
 
 proc notifyResourcesListChanged*(server: McpServer) =
   ## Send a resources list changed notification.
-  if server.notificationCallback.isSome:
-    server.notificationCallback.get()(%*{
+  if server.notificationCallback.isSome or server.notificationSinks.len > 0:
+    server.publishNotification(%*{
       "jsonrpc": "2.0",
       "method": "notifications/resources/list_changed"
     })
@@ -442,8 +478,8 @@ proc registerPrompt*(server: McpServer, prompt: McpPrompt, handler: PromptHandle
   server.prompts[prompt.name] = prompt
   server.promptHandlers[prompt.name] = handler
   # Notify that prompts list has changed
-  if server.notificationCallback.isSome:
-    server.notificationCallback.get()(%*{
+  if server.notificationCallback.isSome or server.notificationSinks.len > 0:
+    server.publishNotification(%*{
       "jsonrpc": "2.0",
       "method": "notifications/prompts/list_changed"
     })
@@ -458,8 +494,8 @@ proc registerProgressResource*(server: McpServer, resource: McpResource, handler
   server.resources[resource.uri] = resource
   server.progressResourceHandlers[resource.uri] = handler
   # Notify that resources list has changed
-  if server.notificationCallback.isSome:
-    server.notificationCallback.get()(%*{
+  if server.notificationCallback.isSome or server.notificationSinks.len > 0:
+    server.publishNotification(%*{
       "jsonrpc": "2.0",
       "method": "notifications/resources/list_changed"
     })
@@ -618,11 +654,22 @@ proc promptContentToJson*(content: PromptContent): JsonNode =
       obj["annotations"] = content.embeddedResourceContent.annotations.get
     return obj
 
-proc handleRequest*(server: McpServer, line: string): McpResult =
+proc handleRequest*(server: McpServer, line: string, context: RequestContext = RequestContext()): McpResult =
   ## Handle an incoming MCP request and return the result.
   try:
     # First, try to determine if this is a notification or request
     let parsed = line.parseJson()
+    if parsed.kind != JObject:
+      return McpResult(isError: true, error: createError(newJNull(), -32600, "Invalid request"))
+    let requestedVersion = parsed{"params", "_meta", "io.modelcontextprotocol/protocolVersion"}.getStr()
+    if server.requestInterceptor == nil and requestedVersion.len > 0 and requestedVersion != MCP_VERSION:
+      return McpResult(isError: true, error: createError(parsed{"id"}, -32022,
+        "Unsupported protocol version", some(%*{"supported": [MCP_VERSION], "requested": requestedVersion})))
+    let modernRequest = server.requestInterceptor != nil and parsed{"params", "_meta", "io.modelcontextprotocol/protocolVersion"}.getStr() == "2026-07-28"
+    if server.requestInterceptor != nil and parsed.kind == JObject:
+      let intercepted = server.requestInterceptor(parsed, context)
+      if intercepted.isSome:
+        return intercepted.get
 
     # Check if it has an 'id' field - if not, it's a notification
     if not parsed.hasKey("id"):
@@ -640,7 +687,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
 
       case notification.`method`
       of "notifications/initialized":
-        if not server.initialized:
+        if not server.initialized and not modernRequest:
           discard
       else:
         # Unknown notification method - just ignore it
@@ -697,7 +744,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       return McpResult(isError: false, response: response)
 
     of "tools/list":
-      if not server.initialized:
+      if not server.initialized and not modernRequest:
         return McpResult(
           isError: true,
           error: createError(request.id, -32001, "Server not initialized")
@@ -725,7 +772,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       return McpResult(isError: false, response: response)
 
     of "tools/call":
-      if not server.initialized:
+      if not server.initialized and not modernRequest:
         return McpResult(
           isError: true,
           error: createError(request.id, -32001, "Server not initialized")
@@ -802,7 +849,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         )
 
     of "prompts/list":
-      if not server.initialized:
+      if not server.initialized and not modernRequest:
         return McpResult(
           isError: true,
           error: createError(request.id, -32001, "Server not initialized")
@@ -835,7 +882,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       return McpResult(isError: false, response: response)
 
     of "prompts/get":
-      if not server.initialized:
+      if not server.initialized and not modernRequest:
         return McpResult(
           isError: true,
           error: createError(request.id, -32001, "Server not initialized")
@@ -878,7 +925,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         )
 
     of "resources/list":
-      if not server.initialized:
+      if not server.initialized and not modernRequest:
         return McpResult(
           isError: true,
           error: createError(request.id, -32001, "Server not initialized")
@@ -908,7 +955,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       return McpResult(isError: false, response: response)
 
     of "resources/read":
-      if not server.initialized:
+      if not server.initialized and not modernRequest:
         return McpResult(
           isError: true,
           error: createError(request.id, -32001, "Server not initialized")
@@ -970,7 +1017,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         )
 
     of "resources/templates/list":
-      if not server.initialized:
+      if not server.initialized and not modernRequest:
         return McpResult(
           isError: true,
           error: createError(request.id, -32001, "Server not initialized")
@@ -1000,7 +1047,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
       return McpResult(isError: false, response: response)
 
     of "resources/subscribe":
-      if not server.initialized:
+      if not server.initialized and not modernRequest:
         return McpResult(
           isError: true,
           error: createError(request.id, -32001, "Server not initialized")
@@ -1024,7 +1071,7 @@ proc handleRequest*(server: McpServer, line: string): McpResult =
         error: createError(request.id, -32601, "Method not found")
       )
 
-  except jsony.JsonError:
+  except jsony.JsonError, JsonParsingError:
     return McpResult(
       isError: true,
       error: createError(0, -32700, "Invalid JSON")

@@ -1,7 +1,7 @@
 import
-  std/[json, options, tables],
+  std/[json, locks, options, tables],
   jsony,
-  ./mcp_core
+  ./[mcp_core, mcp_extensions]
 
 type
   McpClient* = ref object
@@ -12,6 +12,8 @@ type
     availableTools*: Table[string, McpTool]
     notificationCallback*: Option[NotificationCallback]
     protocolVersion*: string
+    modernProtocol*: bool
+    requestLock: Lock
     nextRequestId: int
 
   ClientInfo* = object
@@ -47,10 +49,11 @@ type
     `type`*: string
     text*: string
 
-proc newMcpClient*(name: string, version: string): McpClient =
+proc newMcpClient*(name: string, version: string, modernProtocol = false): McpClient =
   ## Create a new MCP client instance.
   result = McpClient(
     initialized: false,
+    modernProtocol: modernProtocol,
     clientInfo: ClientInfo(name: name, version: version),
     serverInfo: none(ServerInfo),
     serverCapabilities: none(ServerCapabilities),
@@ -58,6 +61,7 @@ proc newMcpClient*(name: string, version: string): McpClient =
     notificationCallback: none(NotificationCallback)
   )
   result.nextRequestId = 1
+  initLock(result.requestLock)
 
 proc setNotificationCallback*(client: McpClient, callback: NotificationCallback) =
   ## Register a callback invoked when the server sends an unsolicited notification.
@@ -65,17 +69,24 @@ proc setNotificationCallback*(client: McpClient, callback: NotificationCallback)
 
 proc getNextRequestId(client: McpClient): int =
   ## Get the next request ID for JSON-RPC requests.
-  result = client.nextRequestId
-  inc client.nextRequestId
+  withLock client.requestLock:
+    result = client.nextRequestId
+    inc client.nextRequestId
 
 proc createRequest*(client: McpClient, `method`: string, params: JsonNode): ClientRequest =
   ## Create a JSON-RPC request.
-  ClientRequest(
-    jsonrpc: "2.0",
-    id: client.getNextRequestId(),
-    `method`: `method`,
-    params: params
-  )
+  if params == nil or params.kind != JObject:
+    raise newException(ValueError, "MCP request parameters must be an object")
+  result = ClientRequest(jsonrpc: "2.0", id: client.getNextRequestId(),
+    `method`: `method`, params: params.copy())
+  if client.modernProtocol:
+    if not result.params.hasKey("_meta"):
+      result.params["_meta"] = %*{}
+    elif result.params["_meta"].kind != JObject:
+      raise newException(ValueError, "Request metadata must be an object")
+    result.params["_meta"][ProtocolVersionKey] = %ModernProtocolVersion
+    result.params["_meta"][ClientInfoKey] = %client.clientInfo
+    result.params["_meta"][ClientCapabilitiesKey] = %*{}
 
 proc createInitializeRequest*(client: McpClient): ClientRequest =
   ## Create an initialize request.
@@ -204,3 +215,19 @@ proc getAvailableTools*(client: McpClient): seq[string] =
   result = @[]
   for name in client.availableTools.keys:
     result.add(name) 
+
+proc handleDiscoveryResponse*(client: McpClient, response: ClientResult) =
+  if response.isError:
+    raise newException(IOError, response.error.error.message)
+  let body = response.response.result
+  var supported = false
+  for version in body["supportedVersions"]:
+    if version.getStr() == ModernProtocolVersion:
+      supported = true
+  if not supported:
+    raise newException(IOError, "Server does not support the requested protocol")
+  client.protocolVersion = ModernProtocolVersion
+  client.serverCapabilities = some(($body["capabilities"]).fromJson(ServerCapabilities))
+  if body.hasKey("serverInfo"):
+    client.serverInfo = some(($body["serverInfo"]).fromJson(ServerInfo))
+  client.initialized = true

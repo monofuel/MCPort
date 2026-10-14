@@ -1,4 +1,4 @@
-name: Github Actions
+name: Build
 on:
   push:
     branches: [master]
@@ -6,24 +6,18 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v3
-    - uses: jiro4989/setup-nim-action@v2
-      with:
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
-        nim-version: stable
-    - name: Install packages
-      run: |
-        sudo apt-get update
-        sudo sudo apt-get install -y ripgrep curl wget dnsutils ca-certificates libpcre3-dev
-    - name: Cache nimble packages
-      uses: actions/cache@v3
-      with:
-        path: ~/.nimble
-        key: ${{ runner.os }}-nimble-v2-${{ hashFiles('*.nimble') }}
-        restore-keys: |
-          ${{ runner.os }}-nimble-v2-
-    - run: nimble install -y
-    - run: nimble test -y
-    - run: nimble test --gc:orc -y
+      - uses: actions/checkout@v4
+      - uses: treeform/setup-nim-action@v6
+      - name: Native libraries
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libssl-dev
+      - name: Resolve locked dependencies with nimby
+        run: |
+          nimby --version
+          task_project_dir="$PWD"
+          cd ..
+          nimby create
+          cd "$task_project_dir"
+          nimby sync -g nimby.lock
+      - run: make check
+      - run: make test

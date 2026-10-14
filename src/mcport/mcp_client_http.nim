@@ -1,8 +1,10 @@
 import
-  std/[algorithm, json, strformat, tables, sets],
+  std/[algorithm, json, strformat, strutils, tables, sets],
   jsony,
   curly,
-  ./[mcp_core, mcp_client_core]
+  ./[mcp_core, mcp_extensions, mcp_client_core, mcp_client_runtime, mcp_http_metadata]
+
+export mcp_client_runtime
 
 type
   HttpMcpClient* = ref object
@@ -20,10 +22,10 @@ proc log(client: HttpMcpClient, msg: string) =
     echo fmt"[HTTP Client] {msg}"
 
 proc newHttpMcpClient*(name: string, version: string, baseUrl: string, logEnabled: bool = true,
-    requestHeaders: HttpHeaders = emptyHttpHeaders(), timeoutSeconds: int = 60): HttpMcpClient =
+    requestHeaders: HttpHeaders = emptyHttpHeaders(), timeoutSeconds: int = 60, modernProtocol = false): HttpMcpClient =
   ## Create a new HTTP MCP client.
   HttpMcpClient(
-    client: newMcpClient(name, version),
+    client: newMcpClient(name, version, modernProtocol),
     baseUrl: baseUrl,
     logEnabled: logEnabled,
     connected: false,
@@ -48,9 +50,18 @@ proc sendMessage(client: HttpMcpClient, message: string): curly.Response =
     raise newException(CatchableError, "HTTP client not initialized")
   var headers = client.requestHeaders
   headers["Content-Type"] = "application/json"
-  headers["Accept"] = "application/json, text/event-stream"
+  headers["Accept"] = "application/json"
   if client.client.protocolVersion.len > 0:
     headers["MCP-Protocol-Version"] = client.client.protocolVersion
+  if client.client.modernProtocol:
+    let node = parseJson(message)
+    headers["MCP-Protocol-Version"] = ModernProtocolVersion
+    headers["Mcp-Method"] = node["method"].getStr()
+    if node["method"].getStr() in ["tools/call", "resources/read", "prompts/get"]:
+      headers["Mcp-Name"] = encodeHeaderValue(node.requestName())
+    if node["method"].getStr() == "tools/call" and node.requestName() in client.client.availableTools:
+      for (key, value) in parameterHeaders(client.client.availableTools[node.requestName()].inputSchema, node{"params", "arguments"}):
+        headers[key] = value
   result = client.curly.post(client.baseUrl, headers, message, timeout = client.timeoutSeconds)
   if result.code < 200 or result.code >= 300:
     let status = result.code
@@ -58,6 +69,8 @@ proc sendMessage(client: HttpMcpClient, message: string): curly.Response =
 
 proc sendRequest(client: HttpMcpClient, request: ClientRequest): ClientResult =
   let response = client.sendMessage(request.toJson())
+  if response.headers["Content-Type"].toLowerAscii().startsWith("text/event-stream"):
+    raise newException(IOError, "HTTP push is unsupported; use polling, WebSocket or stdio")
   let parsed = parseJson(response.body)
   if parsed{"jsonrpc"}.getStr() != "2.0" or parsed{"id"} != %request.id:
     raise newException(CatchableError, "Invalid or mismatched MCP response ID")
@@ -70,6 +83,10 @@ proc initialize*(client: HttpMcpClient) =
   if not client.isConnected():
     raise newException(CatchableError, "Client not connected to server")
 
+  if client.client.modernProtocol:
+    let response = client.sendRequest(client.client.createRequest("server/discover", %*{}))
+    client.client.handleDiscoveryResponse(response)
+    return
   client.log("Initializing connection...")
 
   # Send initialize request
@@ -115,6 +132,12 @@ proc listTools*(client: HttpMcpClient) =
       let tool = fromJson($toolJson, McpTool)
       if discovered.hasKey(tool.name):
         raise newException(CatchableError, "Duplicate MCP tool: " & tool.name)
+      if client.client.modernProtocol:
+        try:
+          discard parameterHeaders(tool.inputSchema, nil)
+        except ValueError as error:
+          stderr.writeLine("Rejected tool " & tool.name & ": " & error.msg)
+          continue
       discovered[tool.name] = tool
     cursor = listResult.response.result{"nextCursor"}.getStr()
     if cursor.len == 0:
@@ -135,6 +158,8 @@ proc callTool*(client: HttpMcpClient, toolName: string, arguments: JsonNode = %*
   if not client.client.initialized:
     raise newException(CatchableError, "Client not initialized")
 
+  if client.client.modernProtocol and toolName notin client.client.availableTools:
+    client.listTools()
   let callRequest = client.client.createToolCallRequest(toolName, arguments)
   let callResult = client.sendRequest(callRequest)
 
@@ -248,3 +273,9 @@ proc connectAndInitialize*(client: HttpMcpClient) =
 proc createExampleHttpClient*(baseUrl: string = "http://localhost:8080"): HttpMcpClient =
   ## Create an example HTTP client for testing.
   newHttpMcpClient("TestHttpClient", "1.0.0", baseUrl)
+
+proc request*(client: HttpMcpClient, methodName: string, params: JsonNode = %*{}): JsonNode =
+  let response = client.sendRequest(client.client.createRequest(methodName, params))
+  if response.isError:
+    raise newException(IOError, response.error.error.message)
+  response.response.result

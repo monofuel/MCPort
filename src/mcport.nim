@@ -5,7 +5,7 @@
 ## or create MCP clients that connect to existing MCP servers.
 
 import
-  mcport/[mcp_core, mcp_server_stdio, mcp_server_http, mcp_client_core, mcp_client_stdio, mcp_client_http]
+  mcport/[mcp_core, mcp_server_stdio, mcp_server_http, mcp_client_core, mcp_client_stdio, mcp_client_http, mcp_extensions, mcp_client_runtime, mcp_client_websocket]
 
 export
   mcp_core,
@@ -13,4 +13,7 @@ export
   mcp_server_http,
   mcp_client_core,
   mcp_client_stdio,
-  mcp_client_http
+  mcp_client_http,
+  mcp_extensions,
+  mcp_client_runtime,
+  mcp_client_websocket

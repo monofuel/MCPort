@@ -1,60 +1,60 @@
 import
-  std/[streams, strutils, json],
+  std/[json, locks, strutils, tables],
   jsony,
-  ./mcp_core
+  ./[mcp_core, mcp_extensions]
+
+type
+  StdioWriter = ref object
+    gate: Lock
+    modern: bool
 
 proc log*(msg: string) =
   stderr.writeLine(msg)
   stderr.flushFile()
 
-proc sendMcpMessage[T](msg: T) =
-  ## Send a properly formatted JSON-RPC message to stdout.
-  let jsonMsg = msg.toJson()
-  stdout.write(jsonMsg)
-  stdout.write("\n")
-  stdout.flushFile()
-
-
-proc stdioNotificationCallback(notification: JsonNode) =
-  ## Notification callback for STDIO transport - sends notifications to stdout.
-  sendMcpMessage(notification)
-
-proc handleStdioRequest(server: McpServer, line: string) =
-  ## Handle an incoming MCP request from stdin using the core server.
-
-  # Check if the incoming message is a notification (no 'id' field) or request (has 'id' field)
-  let isNotification = try:
-    let parsed = line.parseJson()
-    not parsed.hasKey("id")
-  except jsony.JsonError as e:
-    log("JSON parsing failed for incoming message: " & e.msg)
-    false  # If parsing fails, assume it's a request so we send an error response
-
-  let result = server.handleRequest(line)
-
-  if result.isError:
-    # Always send error responses, even for malformed notifications
-    sendMcpMessage(result.error)
-  else:
-    # Only send success responses for requests, not for notifications
-    if not isNotification:
-      sendMcpMessage(result.response)
+proc sendStdioContext(target: pointer, message: JsonNode) {.gcsafe.} =
+  let writer {.cursor.} = cast[StdioWriter](target)
+  withLock writer.gate:
+    stdout.writeLine($message)
+    stdout.flushFile()
 
 proc runStdioServer*(server: McpServer, notificationCallback: NotificationCallback = nil) =
-  ## Run the MCP server main loop using STDIO transport.
-  ## notificationCallback: Optional callback for sending notifications to the client.
-  log("STDIO MCP Server starting...")
-
-  # Set up notification callback - use provided one or default STDIO callback
-  let callback = if notificationCallback != nil: notificationCallback else: stdioNotificationCallback
-  server.setNotificationCallback(callback)
-
+  server.freezeEvents()
+  let writer = StdioWriter()
+  initLock(writer.gate)
+  proc send(message: JsonNode) {.gcsafe.} =
+    withLock writer.gate:
+      stdout.writeLine($message)
+      stdout.flushFile()
+  let context = RequestContext(transport: StdioTransport, connectionId: "stdio",
+    sender: sendStdioContext, sendTarget: cast[pointer](writer))
+  server.notificationSinks.add(proc(message: JsonNode) =
+    var legacy: bool
+    withLock writer.gate:
+      legacy = not writer.modern
+    if legacy and (message{"method"}.getStr() != "notifications/resources/updated" or
+        message{"params", "uri"}.getStr() in server.resourceSubscriptions):
+      send(message))
+  if notificationCallback != nil:
+    server.setNotificationCallback(notificationCallback)
+  defer: server.closeSubscriptions(graceful = true)
   for line in stdin.lines:
-    if line.len > 0:
-      log("Received: " & line)
-      handleStdioRequest(server, line.strip())
-  
+    if line.strip.len == 0:
+      continue
+    var notification = false
+    try:
+      let message = parseJson(line)
+      notification = message.kind == JObject and not message.hasKey("id")
+      if message{"params", "_meta", ProtocolVersionKey}.getStr() == ModernProtocolVersion:
+        withLock writer.gate:
+          writer.modern = true
+    except JsonParsingError:
+      notification = false
+    let response = server.handleRequest(line, context)
+    if response.isError:
+      send(parseJson(response.error.toJson()))
+    elif not response.deferred and not notification:
+      send(parseJson(response.response.toJson()))
 
 when isMainModule:
-  let server = createExampleServer()
-  runStdioServer(server) 
+  runStdioServer(createExampleServer())

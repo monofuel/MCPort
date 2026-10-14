@@ -67,7 +67,7 @@ suite "HTTP Server Tests":
     let server = httpServer.server
 
     # Verify the server has notification capabilities set up
-    check server.notificationCallback.isSome
+    check server.notificationSinks.len > 0
     check httpServer.notifications.len == 0
 
   test "resources/subscribe request is not treated as notification":

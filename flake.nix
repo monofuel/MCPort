@@ -14,12 +14,12 @@
         pkgs.mkShell {
           buildInputs = with pkgs; [
             nim
-            nimble
             curlFull
+            openssl
           ];
 
           shellHook = ''
-            export LD_LIBRARY_PATH=${pkgs.curl.out}/lib:$LD_LIBRARY_PATH
+            export LD_LIBRARY_PATH=${pkgs.curl.out}/lib:${pkgs.openssl.out}/lib:$LD_LIBRARY_PATH
           '';
         };
     };
