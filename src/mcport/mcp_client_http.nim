@@ -85,7 +85,9 @@ proc initialize*(client: HttpMcpClient) =
     raise newException(CatchableError, "Failed to process initialize response")
 
   let notification = createNotificationInitialized()
+  client.client.initialized = false
   discard client.sendMessage(notification.toJson())
+  client.client.initialized = true
   client.log("Successfully initialized")
 
 proc listTools*(client: HttpMcpClient) =

@@ -41,6 +41,7 @@ suite "authenticated JSON HTTP MCP":
     defer: client.close()
     expect CatchableError:
       client.initialize()
+    check not client.client.initialized
 
   test "mismatched response IDs fail":
     let client = fixtureClient("/badid")

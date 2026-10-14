@@ -98,7 +98,9 @@ proc initialize*(client: StdioMcpClient) =
   
   # Send initialized notification (no response expected)
   let notification = createNotificationInitialized()
+  client.client.initialized = false
   client.sendRequest(notification)
+  client.client.initialized = true
   
   client.log("Successfully initialized")
 
