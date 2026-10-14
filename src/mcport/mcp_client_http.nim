@@ -1,5 +1,5 @@
 import
-  std/[json, strformat],
+  std/[algorithm, json, strformat, tables, sets],
   jsony,
   curly,
   ./[mcp_core, mcp_client_core]
@@ -11,23 +11,30 @@ type
     baseUrl*: string
     logEnabled*: bool
     connected*: bool
+    requestHeaders*: HttpHeaders
+    timeoutSeconds*: int
 
 proc log(client: HttpMcpClient, msg: string) =
   ## Log a message if logging is enabled.
   if client.logEnabled:
     echo fmt"[HTTP Client] {msg}"
 
-proc newHttpMcpClient*(name: string, version: string, baseUrl: string, logEnabled: bool = true): HttpMcpClient =
+proc newHttpMcpClient*(name: string, version: string, baseUrl: string, logEnabled: bool = true,
+    requestHeaders: HttpHeaders = emptyHttpHeaders(), timeoutSeconds: int = 60): HttpMcpClient =
   ## Create a new HTTP MCP client.
   HttpMcpClient(
     client: newMcpClient(name, version),
     baseUrl: baseUrl,
     logEnabled: logEnabled,
-    connected: false
+    connected: false,
+    requestHeaders: requestHeaders,
+    timeoutSeconds: timeoutSeconds
   )
 
 proc connect*(client: HttpMcpClient) =
   ## Initialize the HTTP client connection.
+  if client.connected:
+    return
   client.curly = newCurly()
   client.connected = true
   client.log(fmt"Connected to: {client.baseUrl}")
@@ -36,34 +43,27 @@ proc isConnected*(client: HttpMcpClient): bool =
   ## Check if the client is connected.
   client.connected
 
-proc sendRequest(client: HttpMcpClient, request: ClientRequest): ClientResult =
-  ## Send a JSON-RPC request via HTTP.
+proc sendMessage(client: HttpMcpClient, message: string): curly.Response =
   if not client.connected:
     raise newException(CatchableError, "HTTP client not initialized")
+  var headers = client.requestHeaders
+  headers["Content-Type"] = "application/json"
+  headers["Accept"] = "application/json, text/event-stream"
+  if client.client.protocolVersion.len > 0:
+    headers["MCP-Protocol-Version"] = client.client.protocolVersion
+  result = client.curly.post(client.baseUrl, headers, message, timeout = client.timeoutSeconds)
+  if result.code < 200 or result.code >= 300:
+    let status = result.code
+    raise newException(CatchableError, fmt"MCP HTTP request failed with status {status}")
 
-  try:
-    let jsonRequest = request.toJson()
-    client.log(fmt"Sending: {jsonRequest}")
-
-    var headers: curly.HttpHeaders
-    headers["Content-Type"] = "application/json"
-    headers["Accept"] = "application/json"
-
-    let resp = client.curly.post(
-      client.baseUrl,
-      headers,
-      jsonRequest
-    )
-
-    if resp.code != 200:
-      client.log(fmt"HTTP error: status {resp.code}")
-      raise newException(CatchableError, fmt"HTTP request failed with status {resp.code}: {resp.body}")
-
-    client.log(fmt"Received: {resp.body}")
-    return parseResponse(resp.body)
-  except CatchableError as e:
-    client.log(fmt"Request failed: {e.msg}")
-    raise
+proc sendRequest(client: HttpMcpClient, request: ClientRequest): ClientResult =
+  let response = client.sendMessage(request.toJson())
+  let parsed = parseJson(response.body)
+  if parsed{"jsonrpc"}.getStr() != "2.0" or parsed{"id"} != %request.id:
+    raise newException(CatchableError, "Invalid or mismatched MCP response ID")
+  if not parsed.hasKey("result") and not parsed.hasKey("error"):
+    raise newException(CatchableError, "MCP response has no result or error")
+  result = parseResponse(response.body)
 
 proc initialize*(client: HttpMcpClient) =
   ## Initialize the connection with the server.
@@ -84,27 +84,10 @@ proc initialize*(client: HttpMcpClient) =
   if not client.client.handleInitializeResponse(initResult):
     raise newException(CatchableError, "Failed to process initialize response")
 
-  # For HTTP, notifications don't expect responses - just send and continue
   let notification = createNotificationInitialized()
-  try:
-    let jsonRequest = notification.toJson()
-    client.log(fmt"Sending notification: {jsonRequest}")
-
-    var headers: curly.HttpHeaders
-    headers["Content-Type"] = "application/json"
-    headers["Accept"] = "application/json"
-
-    let resp = client.curly.post(
-      client.baseUrl,
-      headers,
-      jsonRequest
-    )
-    client.log(fmt"Notification response: {resp.body}")
-    # Don't parse response for notifications - just log success
-  except CatchableError as e:
-    client.log(fmt"Notification failed: {e.msg}")
-    # Don't fail on notification error - it's not critical for HTTP
-
+  client.client.initialized = false
+  discard client.sendMessage(notification.toJson())
+  client.client.initialized = true
   client.log("Successfully initialized")
 
 proc listTools*(client: HttpMcpClient) =
@@ -117,15 +100,29 @@ proc listTools*(client: HttpMcpClient) =
   if not client.client.initialized:
     raise newException(CatchableError, "Client not initialized")
 
-  let listRequest = client.client.createToolsListRequest()
-  let listResult = client.sendRequest(listRequest)
-
-  if listResult.isError:
-    let errorMessage = listResult.error.error.message
-    client.log(fmt"List tools failed: {errorMessage}")
-    raise newException(CatchableError, fmt"List tools failed: {errorMessage}")
-
-  discard client.client.handleToolsListResponse(listResult)
+  var
+    cursor = ""
+    cursors = initHashSet[string]()
+    discovered = initTable[string, McpTool]()
+  while true:
+    let
+      params = if cursor.len == 0: %*{} else: %*{"cursor": cursor}
+      listRequest = client.client.createRequest("tools/list", params)
+      listResult = client.sendRequest(listRequest)
+    if listResult.isError:
+      raise newException(CatchableError, "List tools failed: " & listResult.error.error.message)
+    for toolJson in listResult.response.result["tools"]:
+      let tool = fromJson($toolJson, McpTool)
+      if discovered.hasKey(tool.name):
+        raise newException(CatchableError, "Duplicate MCP tool: " & tool.name)
+      discovered[tool.name] = tool
+    cursor = listResult.response.result{"nextCursor"}.getStr()
+    if cursor.len == 0:
+      break
+    if cursor in cursors:
+      raise newException(CatchableError, "Repeated MCP tools/list cursor")
+    cursors.incl(cursor)
+  client.client.availableTools = discovered
   client.log("Tools list received successfully")
 
 proc callTool*(client: HttpMcpClient, toolName: string, arguments: JsonNode = %*{}): JsonNode =
@@ -157,22 +154,10 @@ proc getAvailableTools*(client: HttpMcpClient): seq[string] =
   if not client.client.initialized:
     raise newException(CatchableError, "Client not initialized")
 
-  let listRequest = client.client.createToolsListRequest()
-  let listResult = client.sendRequest(listRequest)
-
-  if listResult.isError:
-    let errorMessage = listResult.error.error.message
-    client.log(fmt"List tools failed: {errorMessage}")
-    raise newException(CatchableError, fmt"Failed to list tools: {errorMessage}")
-
-  # Parse the tools from the response
-  var toolNames: seq[string] = @[]
-  if listResult.response.result.hasKey("tools"):
-    for tool in listResult.response.result["tools"]:
-      if tool.hasKey("name"):
-        toolNames.add(tool["name"].getStr())
-
-  return toolNames
+  client.listTools()
+  for name in client.client.availableTools.keys:
+    result.add(name)
+  result.sort()
 
 proc listPrompts*(client: HttpMcpClient): JsonNode =
   ## List available prompts from the server.

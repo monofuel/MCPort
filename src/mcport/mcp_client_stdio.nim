@@ -39,7 +39,7 @@ proc isConnected*(client: StdioMcpClient): bool =
   ## Check if the client is connected to a server.
   client.process != nil and client.process.running()
 
-proc sendRequest(client: StdioMcpClient, request: ClientRequest) =
+proc sendRequest(client: StdioMcpClient, request: ClientRequest | ClientNotification) =
   ## Send a JSON-RPC request to the server.
   let jsonRequest = request.toJson()
   client.log(fmt"Sending: {jsonRequest}")
@@ -98,7 +98,9 @@ proc initialize*(client: StdioMcpClient) =
   
   # Send initialized notification (no response expected)
   let notification = createNotificationInitialized()
+  client.client.initialized = false
   client.sendRequest(notification)
+  client.client.initialized = true
   
   client.log("Successfully initialized")
 

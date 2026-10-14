@@ -1,5 +1,6 @@
 import
   std/[unittest, tables, json, options, strutils],
+  jsony,
   mcport/[mcp_client_core, mcp_core]
 
 var testNotifBuffer {.threadvar.}: seq[JsonNode]
@@ -45,7 +46,7 @@ suite "MCP Client Core Tests":
     # Test notification
     let notification = createNotificationInitialized()
     check notification.`method` == "notifications/initialized"
-    check notification.id == 0  # Notifications use id 0
+    check not parseJson(toJson(notification)).hasKey("id")
 
   test "response parsing success":
     let successResponse = """{"jsonrpc":"2.0","id":1,"result":{"test":"value"}}"""
