@@ -11,6 +11,7 @@ type
     serverCapabilities*: Option[ServerCapabilities]
     availableTools*: Table[string, McpTool]
     notificationCallback*: Option[NotificationCallback]
+    protocolVersion*: string
     nextRequestId: int
 
   ClientInfo* = object
@@ -20,6 +21,11 @@ type
   ClientRequest* = object
     jsonrpc*: string
     id*: int
+    `method`*: string
+    params*: JsonNode
+
+  ClientNotification* = object
+    jsonrpc*: string
     `method`*: string
     params*: JsonNode
 
@@ -82,11 +88,10 @@ proc createInitializeRequest*(client: McpClient): ClientRequest =
     }
   })
 
-proc createNotificationInitialized*(): ClientRequest =
+proc createNotificationInitialized*(): ClientNotification =
   ## Create the initialized notification (no ID for notifications).
-  ClientRequest(
+  ClientNotification(
     jsonrpc: "2.0",
-    id: 0,  # Notifications use id 0
     `method`: "notifications/initialized",
     params: %*{}
   )
@@ -153,6 +158,7 @@ proc handleInitializeResponse*(client: McpClient, response: ClientResult): bool 
   
   client.serverInfo = some(serverInfo)
   client.serverCapabilities = some(capabilities)
+  client.protocolVersion = response.response.result["protocolVersion"].getStr()
   client.initialized = true
   return true
 

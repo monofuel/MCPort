@@ -39,7 +39,7 @@ proc isConnected*(client: StdioMcpClient): bool =
   ## Check if the client is connected to a server.
   client.process != nil and client.process.running()
 
-proc sendRequest(client: StdioMcpClient, request: ClientRequest) =
+proc sendRequest(client: StdioMcpClient, request: ClientRequest | ClientNotification) =
   ## Send a JSON-RPC request to the server.
   let jsonRequest = request.toJson()
   client.log(fmt"Sending: {jsonRequest}")

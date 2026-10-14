@@ -1,4 +1,4 @@
-version     = "1.0.0"
+version     = "1.1.0"
 author      = "monofuel"
 description = "Nim MCP client and server library"
 license     = "MIT"
